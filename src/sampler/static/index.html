@@ -28,6 +28,8 @@
            background:#171a20;font-size:11px;color:var(--dim);flex-wrap:wrap}
   #loopbar .grp{display:flex;gap:3px;align-items:center}
   #loopbar button{padding:1px 5px;font-size:11px;min-width:34px}
+  #play,#stop{min-width:30px;font-size:13px;line-height:1.1}
+  #play.on{background:var(--ok);color:#0b0d10;border-color:var(--ok)}
   #loopbar b{color:var(--warn);font-variant-numeric:tabular-nums;min-width:52px;text-align:center;font-weight:500}
   input,select{background:#101216;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
   input:focus,select:focus{outline:none;border-color:var(--acc)}
@@ -85,6 +87,8 @@
   </div>
 
   <div id="loopbar">
+    <button id="play" title="odtwórz (spacja)">▶</button>
+    <button id="stop" title="zatrzymaj (Esc)">■</button>
     <button id="loopBtn" class="on">pętla</button>
     <span class="grp">start
       <button data-edge="s" data-n="-0.1">−100</button><button data-edge="s" data-n="-0.01">−10</button>
@@ -287,7 +291,11 @@ async function play(start,end,tid){
     drawLoopBar();
     await player.play();
     $("msg").textContent=`${loop?"pętla":"odtwarzam"} ${start.toFixed(2)}–${end.toFixed(2)} s`;
-  }catch(e){stopAt=null;$("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);}
+  }catch(e){
+    // Zatrzymanie w trakcie rozruchu odrzuca obietnicę z play() — to nie awaria.
+    if(e.name==="AbortError"||/interrupted by a call to pause/i.test(e.message||"")) return;
+    stopAt=null;$("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);
+  }
 }
 function audition(){
   const t=targets();if(!t.length)return;
@@ -299,6 +307,26 @@ player.ontimeupdate=()=>{
   else {player.pause();stopAt=null;}
 };
 player.onerror=()=>{$("msg").textContent="błąd wczytywania dźwięku";};
+/* Przyciski przenoszenia: odtwórz wznawia w obrębie ustawionej pętli,
+   zatrzymaj cofa na jej początek, żeby kolejne odtworzenie zaczęło od nowa. */
+$("play").onclick=()=>{
+  if(!player.paused) return;
+  if(loopFrom!==null&&stopAt!==null&&player.currentTime>=loopFrom&&player.currentTime<stopAt){
+    player.play().catch(e=>{
+      if(e.name==="AbortError"||/interrupted by a call to pause/i.test(e.message||"")) return;
+      $("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);
+    });
+  } else audition();
+};
+$("stop").onclick=()=>stopPlayback();
+function stopPlayback(){
+  player.pause();
+  if(loopFrom!==null) player.currentTime=loopFrom;
+  $("msg").textContent="zatrzymane";
+}
+player.onplay =()=>$("play").className="on";
+player.onpause=()=>$("play").className="";
+
 $("loopBtn").onclick=()=>toggleLoop();
 function toggleLoop(){
   loop=!loop;
@@ -468,10 +496,16 @@ document.onkeydown=e=>{
   const len=mode==="search"?searchRows.length:view.length;
   if(e.key==="ArrowDown"){clearSel();row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
   else if(e.key==="ArrowUp"){clearSel();row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
-  else if(e.key===" "){audition();e.preventDefault();}
+  else if(e.key===" "){                       // wyzwala od nowa, jak uderzenie w pad
+    if(player.paused) $("play").onclick();
+    else if(loopFrom!==null) player.currentTime=loopFrom;
+    else audition();
+    e.preventDefault();}
   else if(e.key==="Enter"){assign();e.preventDefault();}
-  else if(e.key==="Escape"){player.pause();stopAt=null;loopFrom=null;drawLoopBar();
-    if(sel||multi.length){clearSel();drawWave();drawRows();}}
+  else if(e.key==="Escape"){
+    if(sel||multi.length){stopPlayback();stopAt=null;loopFrom=null;drawLoopBar();
+                          clearSel();drawWave();drawRows();}
+    else stopPlayback();}
   else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
   else if(e.key==="l"||e.key==="L"){toggleLoop();}
   else if(e.key==="["){nudge("s",e.shiftKey?-0.1:-0.01);e.preventDefault();}
