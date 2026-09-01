@@ -31,6 +31,7 @@
   #play,#stop{min-width:30px;font-size:13px;line-height:1.1}
   #play.on{background:var(--ok);color:#0b0d10;border-color:var(--ok)}
   #fit,#snap{min-width:56px}
+  #half,#dbl{min-width:30px}
   #loopbar input[type=range]{accent-color:var(--acc);vertical-align:middle}
   #loopbar b{color:var(--warn);font-variant-numeric:tabular-nums;min-width:52px;text-align:center;font-weight:500}
   input,select{background:#101216;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
@@ -105,6 +106,8 @@
     <span class="grp">przenikanie
       <input type="range" id="fadeIn" min="0" max="60" step="1" value="12" style="width:90px">
       <b id="fadeVal" style="min-width:44px">12 ms</b></span>
+    <button id="half" title="skróć pętlę o połowę">÷2</button>
+    <button id="dbl" title="wydłuż pętlę dwukrotnie">×2</button>
     <button id="snap" title="dociągnij długość pętli do siatki tempa nagrania">do taktu</button>
     <button id="fit" title="dociągnij granice tak, żeby pętla domykała się bez szwu (F)">domknij</button>
     <span id="lpBpm" style="color:var(--acc)"></span>
@@ -127,7 +130,8 @@
     <kbd>Enter</kbd> na pad &nbsp; <kbd>A</kbd>–<kbd>D</kbd> bank<br>
     <kbd>T</kbd> tagowanie &nbsp; <kbd>1</kbd>–<kbd>9</kbd> szybki tag<br>
     <kbd>L</kbd> pętla &nbsp; <kbd>F</kbd> domknij pętlę<br>
-    <kbd>[</kbd><kbd>]</kbd> start &nbsp; <kbd>,</kbd><kbd>.</kbd> koniec<br><kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = zaznacz wiele</span>
+    <kbd>[</kbd><kbd>]</kbd> start &nbsp; <kbd>,</kbd><kbd>.</kbd> koniec<br>
+    <kbd>−</kbd> o połowę &nbsp; <kbd>=</kbd> dwa razy dłużej<br><kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = zaznacz wiele</span>
   </div>
   <h2>Chmura tagów</h2>
   <div id="cloud" style="padding:8px 10px;display:flex;gap:4px;flex-wrap:wrap"></div>
@@ -327,12 +331,13 @@ function stopPlayback(){
 /* Zakres pętli ustawia się z zaznaczenia TYLKO przy jego zmianie. Odtwarzanie
    gra to, co aktualnie stoi w loopFrom/stopAt — inaczej każde wznowienie
    kasowałoby ręczne korekty (dociągnięcie do taktu, domknięcie, przesunięcie). */
-let loopTid=null;
+let loopTid=null, loopEdited=false;
 function rangeFromTargets(){
   const t=targets(); if(!t.length) return false;
   loopTid=t[0].tid;
   loopFrom=Math.min(...t.map(f=>f.start));
   stopAt  =Math.max(...t.map(f=>f.end));
+  loopEdited=false;
   drawLoopBar();
   return true;
 }
@@ -383,7 +388,11 @@ function drawLoopBar(){
   $("lpEnd").textContent  =ok?stopAt.toFixed(3):"—";
   if(!ok){$("lpLen").textContent="";$("lpBpm").textContent="";return;}
   const L=(stopAt-loopFrom)-fade;          // przenikanie skraca faktyczną pętlę
-  $("lpLen").textContent=`pętla ${L.toFixed(3)} s`;
+  const mb=L*44100*2*2/1048576;            // 44,1 kHz, stereo, 16 bit
+  const el=$("lpLen");
+  el.textContent=`pętla ${L.toFixed(3)} s · ${mb.toFixed(1)} MB`;
+  el.style.color = L>6?"#e07a5a":L>3?"var(--warn)":"var(--fg)";
+  el.title = L>6?"długa jak na pad — MPC Sample ma 2 GB pamięci":"";
   const opts=[1,2,4].map(b=>({b,bpm:60*4*b/L})).filter(o=>o.bpm>=55&&o.bpm<=190)
     .map(o=>`${o.bpm.toFixed(1)} BPM (${o.b} ${o.b===1?"takt":"takty"})`);
   $("lpBpm").textContent=opts.length?"≈ "+opts.join("  /  "):"";
@@ -392,6 +401,7 @@ function drawLoopBar(){
 let nudgeTimer=null;
 function nudge(edge,d){
   if(loopFrom===null||stopAt===null) return;
+  loopEdited=true;
   const dur=cur?.wave.duration||1e9;
   if(edge==="s") loopFrom=Math.max(0,Math.min(stopAt-0.05,+(loopFrom+d).toFixed(3)));
   else           stopAt  =Math.min(dur,Math.max(loopFrom+0.05,+(stopAt+d).toFixed(3)));
@@ -408,6 +418,7 @@ function snapBeats(){
   if(loopFrom===null||stopAt===null||!cur) return;
   const bpm=tracks.find(t=>t.id===cur.id)?.bpm;
   if(!bpm){$("lpFit").textContent="brak zmierzonego tempa";$("lpFit").style.color="#e07a5a";return;}
+  loopEdited=true;
   const beat=60/bpm, L=(stopAt-loopFrom)-fade;
   const n=Math.max(1,Math.round(L/beat));
   stopAt=+(loopFrom+n*beat+fade).toFixed(4);
@@ -417,6 +428,24 @@ function snapBeats(){
   drawLoopBar(); if(playing) startPlayback();
 }
 $("snap").onclick=()=>snapBeats();
+
+/* Skalowanie długości pętli. Początek zostaje, rusza się koniec — przy pracy
+   z frazą to on jest do negocjacji, nie atak. */
+function scaleLoop(k){
+  if(loopFrom===null||stopAt===null) return;
+  loopEdited=true;
+  const dur=cur?.wave.duration||1e9;
+  const L=(stopAt-loopFrom)-fade;
+  const nowa=Math.max(0.05, L*k);
+  stopAt=+Math.min(dur, loopFrom+nowa+fade).toFixed(4);
+  if(sel){sel.end=stopAt;drawWave();}
+  $("lpFit").textContent = k<1?"skrócone o połowę":"wydłużone dwukrotnie";
+  $("lpFit").style.color="var(--dim)";
+  drawLoopBar();
+  if(playing) startPlayback();
+}
+$("half").onclick=()=>scaleLoop(0.5);
+$("dbl").onclick=()=>scaleLoop(2);
 
 /* ---------- domykanie kształtem ---------- */
 $("fit").onclick=()=>fitLoop();
@@ -428,7 +457,7 @@ async function fitLoop(){
     const r=await (await fetch("/api/loopfit",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({track_id:cur.id,start:loopFrom,end:stopAt})})).json();
     if(r.note){$("lpFit").textContent=r.note;$("lpFit").style.color="#e07a5a";return;}
-    loopFrom=r.start;stopAt=r.end;
+    loopFrom=r.start;stopAt=r.end;loopEdited=true;
     if(sel){sel.start=r.start;sel.end=r.end;}
     const ocena=r.score>=0.8?"domknięte":r.score>=0.5?"przyzwoicie":"kształt nie pasuje — zwiększ przenikanie";
     $("lpFit").textContent=`${ocena} · zgodność ${r.score.toFixed(2)} · `+
@@ -490,7 +519,7 @@ function drawRows(){
   const c=tb.querySelector("tr.cur")||tb.querySelector("tr.multi");if(c)c.scrollIntoView({block:"nearest"});
   const t=targets();
   $("tagBox").value=t.length===1?(fragTags[t[0].slice_idx]||[]).join(", "):"";
-  $("cnt").textContent=Object.keys(picks).length+" na padach";
+  padSummary();
 }
 function drawSearch(){
   const tb=$("tb");
@@ -538,6 +567,16 @@ async function cloud(){
 }
 
 /* ---------- pady ---------- */
+function padSummary(){
+  const v=Object.values(picks);
+  const sek=v.reduce((a,p)=>a+(p.end-p.start),0);
+  const mb=sek*44100*2*2/1048576;
+  $("cnt").textContent = v.length
+    ? `${v.length} na padach · ${sek.toFixed(1)} s · ${mb.toFixed(1)} MB`
+    : "0 na padach";
+  $("cnt").style.color = mb>1500?"#e07a5a":"var(--dim)";
+}
+
 function drawBanks(){const b=$("banks");b.innerHTML="";
   BANKS.forEach(x=>{const t=document.createElement("button");t.textContent=x;t.className=x===bank?"on":"";
     t.onclick=()=>{bank=x;padCur=0;drawBanks();drawPads();};b.appendChild(t);});}
@@ -549,7 +588,13 @@ function drawPads(){const g=$("pads");g.innerHTML="";
 const padOf=idx=>Object.keys(picks).find(k=>picks[k].track_id===cur?.id&&picks[k].idx===idx);
 
 function assign(){
-  const frags=targets();if(!frags.length)return;
+  // Po ręcznym dostrojeniu na pad idzie TWOJA pętla, a nie pierwotne cięcia —
+  // inaczej cała robota z granicami i przenikaniem szłaby w próżnię.
+  const frags = (loopEdited && loopFrom!==null && stopAt!==null && loopTid)
+    ? [{slice_idx:-Math.round(loopFrom*1000), start:loopFrom, end:stopAt,
+        dur:+(stopAt-loopFrom).toFixed(3), rms_db:0, tid:loopTid}]
+    : targets();
+  if(!frags.length)return;
   const nm=mode==="search"?null:cur.name;
   let placed=0;
   for(const f of frags){
@@ -563,7 +608,7 @@ function assign(){
   if(placed===frags.length) $("msg").textContent=`na pady: ${frag(placed)}`;
   const len=mode==="search"?searchRows.length:view.length;
   if(!sel&&!multi.length&&row<len-1) row++;
-  drawPads();drawRows();drawWave();
+  drawPads();drawRows();drawWave();padSummary();
 }
 
 /* ---------- klawiatura ---------- */
@@ -581,6 +626,8 @@ document.onkeydown=e=>{
   else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
   else if(e.key==="l"||e.key==="L"){toggleLoop();}
   else if(e.key==="f"||e.key==="F"){fitLoop();e.preventDefault();}
+  else if(e.key==="-"){scaleLoop(0.5);e.preventDefault();}
+  else if(e.key==="="||e.key==="+"){scaleLoop(2);e.preventDefault();}
   else if(e.key==="["){nudge("s",e.shiftKey?-0.1:-0.01);e.preventDefault();}
   else if(e.key==="]"){nudge("s",e.shiftKey? 0.1: 0.01);e.preventDefault();}
   else if(e.key===","){nudge("e",e.shiftKey?-0.1:-0.01);e.preventDefault();}

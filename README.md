@@ -71,6 +71,7 @@ nagrania z domeny publicznej z archive.org, jeśli chcesz mieć na czym testowa�
 | `F` | domknij pętlę |
 | `[` `]` | granica początku pętli (Shift = 100 ms) |
 | `,` `.` | granica końca pętli |
+| `−` `=` | pętla o połowę krótsza / dwa razy dłuższa |
 | `Esc` | stop / zdejmij zaznaczenie |
 
 Przeciągnięcie po fali zaznacza wszystkie fragmenty przecinające zakres —
@@ -109,6 +110,16 @@ się wartości pośrednich i traktuj je jako podpowiedź, nie wyrocznię.
 
 Pasek pętli pokazuje też tempo, które długość pętli implikuje przy jednym,
 dwóch i czterech taktach na cztery — pomaga trafić w siatkę.
+
+Długość skalujesz przyciskami **÷2** i **×2**. Pasek pokazuje przy niej koszt
+pamięci, a powyżej 3 sekund robi się żółty, powyżej 6 — czerwony: MPC Sample
+ma 2 GB i długie pętle zjadają je szybciej, niż się wydaje. Licznik przy padach
+sumuje cały zestaw.
+
+Po ręcznym dostrojeniu granic `Enter` obsadza pad **twoją pętlą**, a nie
+pierwotnym cięciem z detektora — inaczej praca z granicami i przenikaniem
+szłaby w próżnię. Bez korekty zachowanie jest jak dotąd: każdy zaznaczony
+fragment trafia na osobny pad.
 
 **Kolejność ma znaczenie.** Przycisk **do taktu** dociąga długość pętli do
 siatki tempa zmierzonego dla nagrania, dopiero potem **domknij** szuka
