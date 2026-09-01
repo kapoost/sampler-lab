@@ -30,7 +30,8 @@
   #loopbar button{padding:1px 5px;font-size:11px;min-width:34px}
   #play,#stop{min-width:30px;font-size:13px;line-height:1.1}
   #play.on{background:var(--ok);color:#0b0d10;border-color:var(--ok)}
-  #fit{min-width:56px}
+  #fit,#snap{min-width:56px}
+  #loopbar input[type=range]{accent-color:var(--acc);vertical-align:middle}
   #loopbar b{color:var(--warn);font-variant-numeric:tabular-nums;min-width:52px;text-align:center;font-weight:500}
   input,select{background:#101216;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
   input:focus,select:focus{outline:none;border-color:var(--acc)}
@@ -101,6 +102,10 @@
       <button data-edge="e" data-n="0.01">+10</button><button data-edge="e" data-n="0.1">+100</button></span>
     <span>ms</span>
     <span id="lpLen" style="color:var(--fg)"></span>
+    <span class="grp">przenikanie
+      <input type="range" id="fadeIn" min="0" max="60" step="1" value="12" style="width:90px">
+      <b id="fadeVal" style="min-width:44px">12 ms</b></span>
+    <button id="snap" title="dociągnij długość pętli do siatki tempa nagrania">do taktu</button>
     <button id="fit" title="dociągnij granice tak, żeby pętla domykała się bez szwu (F)">domknij</button>
     <span id="lpBpm" style="color:var(--acc)"></span>
     <span id="lpFit"></span>
@@ -135,7 +140,6 @@
   <span id="msg"></span>
 </div>
 
-<audio id="player"></audio>
 
 <script>
 const BANKS=["A","B","C","D"];
@@ -143,7 +147,8 @@ const PRESETS=["głos","fraza","oddech","riff","akord","bas","perkusja","stopa",
 let tracks=[],cur=null,slices=[],view=[],row=0,bank="A",padCur=0,mode="track";
 let picks={},fragTags={},taggedFrags=[],searchRows=[];
 let sel=null,multi=[],drag=null,dragPx=0,stopAt=null,loopFrom=null,loop=true;
-const player=document.getElementById("player"),$=id=>document.getElementById(id);
+const $=id=>document.getElementById(id);
+window.__stan=()=>({loopFrom,stopAt,fade,loop,playing,cur:cur&&cur.id,sel,multi:multi.length});
 const typing=()=>["INPUT","TEXTAREA"].includes(document.activeElement.tagName);
 const plural=(n,a,b,c)=>{const d=n%10,e=n%100;
   return n===1?a:(d>=2&&d<=4&&!(e>=12&&e<=14))?b:c;};
@@ -170,12 +175,11 @@ async function boot(){
 }
 
 async function load(id){
-  mode="track";clearSel();syncTabs();
+  mode="track";clearSel();$("lpFit").textContent="";syncTabs();
   document.querySelectorAll(".trk").forEach(e=>e.classList.toggle("sel",e.dataset.id===id));
   $("msg").textContent="liczę cięcia...";
   const d=await (await fetch("/api/track/"+id)).json();
   cur=d;slices=d.slices;row=0;
-  player.src="/audio/"+id;
   taggedFrags=await (await fetch("/api/frags?track_id="+id)).json();
   fragTags={};taggedFrags.forEach(f=>fragTags[f.slice_idx]=f.tags);
   $("sub").textContent=`${slices.length} fragmentów`+(d.wave.duration>=d.capped-1?` (pierwsze ${d.capped|0} s)`:"");
@@ -245,7 +249,7 @@ window.addEventListener("mouseup",e=>{
   }
   const hit=candidates().filter(f=>f.end>a&&f.start<b);   // przecięcie z zakresem
   sel={start:+a.toFixed(3),end:+b.toFixed(3)};
-  multi=hit;
+  multi=hit; $("lpFit").textContent="";
   const tagged=hit.filter(f=>(fragTags[f.slice_idx]||[]).length).length;
   const el=$("selInfo");
   if(hit.length){
@@ -277,100 +281,144 @@ function targets(){
   return s?[{slice_idx:s.idx,start:s.start,end:s.end,dur:s.dur,rms_db:s.rms_db,tid:cur.id}]:[];
 }
 
-/* ---------- odtwarzanie z pętlą ---------- */
-async function play(start,end,tid){
-  try{
-    if(tid&&!player.src.endsWith("/audio/"+tid)) player.src="/audio/"+tid;
-    if(player.readyState<1){
-      $("msg").textContent="wczytuję...";
-      await new Promise((ok,bad)=>{
-        const done=()=>{clr();ok();},fail=()=>{clr();bad(new Error("nie udało się wczytać pliku"));};
-        const to=setTimeout(fail,15000);
-        const clr=()=>{clearTimeout(to);player.removeEventListener("loadedmetadata",done);
-                       player.removeEventListener("error",fail);};
-        player.addEventListener("loadedmetadata",done);player.addEventListener("error",fail);
-      });
-    }
-    loopFrom=start;stopAt=end;player.currentTime=start;
-    $("lpFit").textContent="";
-    drawLoopBar();
-    await player.play();
-    $("msg").textContent=`${loop?"pętla":"odtwarzam"} ${start.toFixed(2)}–${end.toFixed(2)} s`;
-  }catch(e){
-    // Zatrzymanie w trakcie rozruchu odrzuca obietnicę z play() — to nie awaria.
-    if(e.name==="AbortError"||/interrupted by a call to pause/i.test(e.message||"")) return;
-    stopAt=null;$("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);
-  }
-}
-function audition(){
-  const t=targets();if(!t.length)return;
-  play(Math.min(...t.map(f=>f.start)),Math.max(...t.map(f=>f.end)),t[0].tid);
-}
-player.ontimeupdate=()=>{
-  if(stopAt===null||player.currentTime<stopAt) return;
-  if(loop&&loopFrom!==null) player.currentTime=loopFrom;
-  else {player.pause();stopAt=null;}
-};
-player.onerror=()=>{$("msg").textContent="błąd wczytywania dźwięku";};
-/* Przyciski przenoszenia: odtwórz wznawia w obrębie ustawionej pętli,
-   zatrzymaj cofa na jej początek, żeby kolejne odtworzenie zaczęło od nowa. */
-$("play").onclick=()=>{
-  if(!player.paused) return;
-  if(loopFrom!==null&&stopAt!==null&&player.currentTime>=loopFrom&&player.currentTime<stopAt){
-    player.play().catch(e=>{
-      if(e.name==="AbortError"||/interrupted by a call to pause/i.test(e.message||"")) return;
-      $("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);
-    });
-  } else audition();
-};
-$("stop").onclick=()=>stopPlayback();
-function stopPlayback(){
-  player.pause();
-  if(loopFrom!==null) player.currentTime=loopFrom;
-  $("msg").textContent="zatrzymane";
-}
-player.onplay =()=>$("play").className="on";
-player.onpause=()=>$("play").className="";
+/* ---------- odtwarzanie: Web Audio, pętla próbkowo dokładna ---------- */
+/* Element <audio> nie potrafi zapętlać bez zauważalnego rozrzutu — przestawianie
+   currentTime gubi dziesiątki milisekund. Dlatego wycinek pobieramy jako WAV,
+   dekodujemy raz i zapętlamy w Web Audio, gdzie pętla jest bezszwowa z definicji.
+   Przenikanie wmontowujemy w sam bufor: ogon wchodzi w początek, więc szew
+   znika nawet wtedy, gdy przebiegi nie pasują do siebie kształtem. */
+let actx=null, srcNode=null, rawBuf=null, playing=false, fade=0.012;
+const clipCache=new Map();
+const AC=()=>actx||(actx=new (window.AudioContext||window.webkitAudioContext)());
 
+async function getClip(tid,start,end){
+  const key=`${tid}|${start.toFixed(3)}|${end.toFixed(3)}`;
+  if(clipCache.has(key)) return clipCache.get(key);
+  const r=await fetch(`/api/clip/${tid}?start=${start}&end=${end}`);
+  if(!r.ok) throw new Error("serwer nie oddał wycinka");
+  const buf=await AC().decodeAudioData(await r.arrayBuffer());
+  if(clipCache.size>40) clipCache.delete(clipCache.keys().next().value);
+  clipCache.set(key,buf);
+  return buf;
+}
+
+/* Równomocowe przenikanie ogona w początek. Bufor skraca się o długość
+   przenikania — to jest cena za brak szwu i trzeba ją pokazać użytkownikowi. */
+function withFade(buf,sec){
+  const F=Math.min(Math.floor(sec*buf.sampleRate), Math.floor(buf.length/3));
+  if(F<8) return buf;
+  const out=AC().createBuffer(buf.numberOfChannels, buf.length-F, buf.sampleRate);
+  for(let c=0;c<buf.numberOfChannels;c++){
+    const src=buf.getChannelData(c), dst=out.getChannelData(c);
+    dst.set(src.subarray(F, buf.length-F), F);
+    for(let i=0;i<F;i++){
+      const t=i/F, gOut=Math.cos(t*Math.PI/2), gIn=Math.sin(t*Math.PI/2);
+      dst[i]=src[buf.length-F+i]*gOut + src[i]*gIn;
+    }
+  }
+  return out;
+}
+
+function stopPlayback(){
+  if(srcNode){try{srcNode.stop();}catch(e){} srcNode.disconnect(); srcNode=null;}
+  playing=false; $("play").className="";
+}
+
+/* Zakres pętli ustawia się z zaznaczenia TYLKO przy jego zmianie. Odtwarzanie
+   gra to, co aktualnie stoi w loopFrom/stopAt — inaczej każde wznowienie
+   kasowałoby ręczne korekty (dociągnięcie do taktu, domknięcie, przesunięcie). */
+let loopTid=null;
+function rangeFromTargets(){
+  const t=targets(); if(!t.length) return false;
+  loopTid=t[0].tid;
+  loopFrom=Math.min(...t.map(f=>f.start));
+  stopAt  =Math.max(...t.map(f=>f.end));
+  drawLoopBar();
+  return true;
+}
+
+async function startPlayback(){
+  if(loopFrom===null||stopAt===null||!loopTid){ if(!rangeFromTargets()) return; }
+  const tid=loopTid, a=loopFrom, b=stopAt;
+  drawLoopBar();
+  try{
+    if(AC().state==="suspended") await AC().resume();
+    $("msg").textContent="wczytuję...";
+    rawBuf=await getClip(tid,a,b);
+    stopPlayback();
+    const buf=withFade(rawBuf,fade);
+    srcNode=AC().createBufferSource();
+    srcNode.buffer=buf; srcNode.loop=loop;
+    srcNode.onended=()=>{if(srcNode&&!loop){srcNode=null;playing=false;$("play").className="";}};
+    srcNode.connect(AC().destination); srcNode.start();
+    playing=true; $("play").className="on";
+    const skrot=fade>0.0005?`, przenikanie ${(fade*1000).toFixed(0)} ms`:"";
+    $("msg").textContent=`${loop?"pętla":"odtwarzam"} ${a.toFixed(2)}–${b.toFixed(2)} s${skrot}`;
+  }catch(e){$("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);}
+}
+function audition(){ if(rangeFromTargets()) startPlayback(); }
+
+$("play").onclick=()=>{if(!playing) startPlayback();};
+$("stop").onclick=()=>{stopPlayback();$("msg").textContent="zatrzymane";};
 $("loopBtn").onclick=()=>toggleLoop();
 function toggleLoop(){
   loop=!loop;
   $("loopBtn").className=loop?"on":"";
-  $("loopBtn").title=loop?"pętla włączona":"pętla wyłączona";
+  if(srcNode) srcNode.loop=loop;
   drawLoopBar();
 }
 
-/* Dostrajanie granic w trakcie grania. Pokazuje długość i tempo, które ta
-   długość implikuje przy 1, 2 i 4 taktach na cztery — ułatwia domknięcie
-   pętli tak, żeby wpadła w siatkę. */
+/* suwak przenikania */
+$("fadeIn").oninput=()=>{
+  fade=+$("fadeIn").value/1000;
+  $("fadeVal").textContent=$("fadeIn").value+" ms";
+  drawLoopBar();
+  if(playing) startPlayback();
+};
+
+/* ---------- pasek pętli ---------- */
 function drawLoopBar(){
-  const ok = loopFrom!==null && stopAt!==null;
-  $("lpStart").textContent = ok ? loopFrom.toFixed(3) : "—";
-  $("lpEnd").textContent   = ok ? stopAt.toFixed(3)   : "—";
-  if(!ok){ $("lpLen").textContent=""; $("lpBpm").textContent=""; return; }
-  const L = stopAt - loopFrom;
-  $("lpLen").textContent = `długość ${L.toFixed(3)} s`;
-  const opts = [1,2,4]
-    .map(b=>({b, bpm:60*4*b/L}))
-    .filter(o=>o.bpm>=55&&o.bpm<=190)
-    .map(o=>`${o.bpm.toFixed(1)} BPM (${o.b} ${o.b===1?"takt":o.b===2?"takty":"takty"})`);
-  $("lpBpm").textContent = opts.length ? "≈ "+opts.join("  /  ") : "";
+  const ok=loopFrom!==null&&stopAt!==null;
+  $("lpStart").textContent=ok?loopFrom.toFixed(3):"—";
+  $("lpEnd").textContent  =ok?stopAt.toFixed(3):"—";
+  if(!ok){$("lpLen").textContent="";$("lpBpm").textContent="";return;}
+  const L=(stopAt-loopFrom)-fade;          // przenikanie skraca faktyczną pętlę
+  $("lpLen").textContent=`pętla ${L.toFixed(3)} s`;
+  const opts=[1,2,4].map(b=>({b,bpm:60*4*b/L})).filter(o=>o.bpm>=55&&o.bpm<=190)
+    .map(o=>`${o.bpm.toFixed(1)} BPM (${o.b} ${o.b===1?"takt":"takty"})`);
+  $("lpBpm").textContent=opts.length?"≈ "+opts.join("  /  "):"";
 }
+
+let nudgeTimer=null;
 function nudge(edge,d){
   if(loopFrom===null||stopAt===null) return;
   const dur=cur?.wave.duration||1e9;
   if(edge==="s") loopFrom=Math.max(0,Math.min(stopAt-0.05,+(loopFrom+d).toFixed(3)));
   else           stopAt  =Math.min(dur,Math.max(loopFrom+0.05,+(stopAt+d).toFixed(3)));
   if(sel){sel.start=loopFrom;sel.end=stopAt;drawWave();}
-  if(player.currentTime<loopFrom||player.currentTime>stopAt) player.currentTime=loopFrom;
   drawLoopBar();
+  clearTimeout(nudgeTimer);                 // dociąganie bywa seryjne — nie pobieramy przy każdym kroku
+  nudgeTimer=setTimeout(()=>{if(playing) startPlayback();},180);
 }
 document.querySelectorAll("#loopbar button[data-edge]").forEach(b=>
   b.onclick=()=>nudge(b.dataset.edge,+b.dataset.n));
 
-/* Domykanie pętli: serwer szuka końca, przed którym przebieg wygląda jak przed
-   początkiem, i dociąga obie granice do przejść przez zero. Zgodność zwracana
-   przez serwer mówi, na ile się udało — nie każdy materiał da się domknąć. */
+/* dociągnięcie długości pętli do siatki tempa nagrania */
+function snapBeats(){
+  if(loopFrom===null||stopAt===null||!cur) return;
+  const bpm=tracks.find(t=>t.id===cur.id)?.bpm;
+  if(!bpm){$("lpFit").textContent="brak zmierzonego tempa";$("lpFit").style.color="#e07a5a";return;}
+  const beat=60/bpm, L=(stopAt-loopFrom)-fade;
+  const n=Math.max(1,Math.round(L/beat));
+  stopAt=+(loopFrom+n*beat+fade).toFixed(4);
+  if(sel){sel.end=stopAt;drawWave();}
+  $("lpFit").textContent=`${n} ${n===1?"miara":n<5?"miary":"miar"} przy ${bpm} BPM`;
+  $("lpFit").style.color="var(--acc)";
+  drawLoopBar(); if(playing) startPlayback();
+}
+$("snap").onclick=()=>snapBeats();
+
+/* ---------- domykanie kształtem ---------- */
 $("fit").onclick=()=>fitLoop();
 async function fitLoop(){
   if(loopFrom===null||stopAt===null||!cur){$("msg").textContent="najpierw zaznacz fragment";return;}
@@ -382,13 +430,12 @@ async function fitLoop(){
     if(r.note){$("lpFit").textContent=r.note;$("lpFit").style.color="#e07a5a";return;}
     loopFrom=r.start;stopAt=r.end;
     if(sel){sel.start=r.start;sel.end=r.end;}
-    const ocena = r.score>=0.8?"domknięte":r.score>=0.5?"przyzwoicie":"słabo — ten materiał się nie domyka";
+    const ocena=r.score>=0.8?"domknięte":r.score>=0.5?"przyzwoicie":"kształt nie pasuje — zwiększ przenikanie";
     $("lpFit").textContent=`${ocena} · zgodność ${r.score.toFixed(2)} · `+
       `start ${((r.start-before.s)*1000).toFixed(0)} ms, koniec ${((r.end-before.e)*1000).toFixed(0)} ms`;
-    $("lpFit").style.color = r.score>=0.8?"var(--ok)":r.score>=0.5?"var(--warn)":"#e07a5a";
+    $("lpFit").style.color=r.score>=0.8?"var(--ok)":r.score>=0.5?"var(--warn)":"#e07a5a";
     drawLoopBar();drawWave();
-    player.currentTime=loopFrom;
-    if(player.paused) player.play().catch(()=>{});
+    if(playing) startPlayback();
   }catch(e){$("lpFit").textContent="nie udało się: "+(e.message||e.name);$("lpFit").style.color="#e07a5a";}
 }
 
@@ -525,16 +572,12 @@ document.onkeydown=e=>{
   const len=mode==="search"?searchRows.length:view.length;
   if(e.key==="ArrowDown"){clearSel();row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
   else if(e.key==="ArrowUp"){clearSel();row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
-  else if(e.key===" "){                       // wyzwala od nowa, jak uderzenie w pad
-    if(player.paused) $("play").onclick();
-    else if(loopFrom!==null) player.currentTime=loopFrom;
-    else audition();
-    e.preventDefault();}
+  else if(e.key===" "){startPlayback();e.preventDefault();}   // wyzwala od nowa, jak uderzenie w pad
   else if(e.key==="Enter"){assign();e.preventDefault();}
   else if(e.key==="Escape"){
-    if(sel||multi.length){stopPlayback();stopAt=null;loopFrom=null;drawLoopBar();
-                          clearSel();drawWave();drawRows();}
-    else stopPlayback();}
+    stopPlayback();$("msg").textContent="zatrzymane";
+    if(sel||multi.length){stopAt=null;loopFrom=null;loopTid=null;$("lpFit").textContent="";drawLoopBar();
+                          clearSel();drawWave();drawRows();}}
   else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
   else if(e.key==="l"||e.key==="L"){toggleLoop();}
   else if(e.key==="f"||e.key==="F"){fitLoop();e.preventDefault();}
@@ -553,8 +596,9 @@ $("exp").onclick=async()=>{
   if(!items.length){$("msg").textContent="żaden pad nie jest obsadzony";return;}
   $("msg").textContent="wycinam...";
   const r=await (await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({items})})).json();
-  $("msg").textContent=`zapisano ${r.written.length} plików do ${r.folder}`;
+    body:JSON.stringify({items,fade})})).json();
+  $("msg").textContent=`zapisano ${r.written.length} plików do ${r.folder}`
+    +(fade>0.0005?` (z przenikaniem ${(fade*1000).toFixed(0)} ms)`:"");
 };
 
 boot();

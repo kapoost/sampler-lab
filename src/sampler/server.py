@@ -10,8 +10,13 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import io
+
+import librosa
+import numpy as np
+import soundfile as sf
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -176,6 +181,27 @@ def api_tagcloud():
     return sorted(({"tag": k, "n": v} for k, v in counts.items()), key=lambda d: -d["n"])
 
 
+@app.get("/api/clip/{tid}")
+def api_clip(tid: str, start: float, end: float):
+    """Wycinek jako WAV — do odtwarzania w Web Audio.
+
+    Element <audio> przeglądarki nie potrafi zapętlać próbkowo dokładnie;
+    przestawianie currentTime ma rozrzut rzędu dziesiątek milisekund. Dlatego
+    fragment pobieramy osobno i zapętlamy po stronie Web Audio.
+    """
+    path = catalog().get(tid)
+    if not path:
+        raise HTTPException(404, "nie ma takiego nagrania")
+    dur = max(0.02, min(30.0, end - start))
+    y, sr = librosa.load(path, sr=44100, mono=False, offset=max(0.0, start), duration=dur)
+    if y.ndim == 1:
+        y = y[np.newaxis, :]
+    buf = io.BytesIO()
+    sf.write(buf, y.T, sr, subtype="PCM_16", format="WAV")
+    return Response(buf.getvalue(), media_type="audio/wav",
+                    headers={"Cache-Control": "no-store"})
+
+
 class LoopFit(BaseModel):
     track_id: str
     start: float
@@ -203,6 +229,7 @@ class ExportItem(BaseModel):
 
 class ExportRequest(BaseModel):
     items: list[ExportItem]
+    fade: float = 0.0
 
 
 @app.post("/api/export")
@@ -215,7 +242,7 @@ def api_export(req: ExportRequest):
             continue
         stem = (it.label or path.stem)[:40].replace("/", "_").replace(" ", "_")
         dest = EXPORT / f"{it.bank}{it.pad:02d}_{stem}.wav"
-        slicer.export(path, it.start, it.end, dest)
+        slicer.export(path, it.start, it.end, dest, fade=req.fade)
         written.append(dest.name)
     return JSONResponse({"written": written, "folder": str(EXPORT)})
 

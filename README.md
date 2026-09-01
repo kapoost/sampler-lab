@@ -80,6 +80,20 @@ nie trafia w żaden fragment, staje się samodzielnym zaznaczeniem.
 Zakładka **Szukaj** przegląda otagowane fragmenty ze wszystkich nagrań naraz.
 Wiele tagów działa jak koniunkcja.
 
+## Pętla
+
+Odsłuch idzie przez Web Audio, nie przez element `<audio>`. Powód jest
+praktyczny: przestawianie `currentTime` gubi dziesiątki milisekund, więc pętla
+słyszalnie kuleje niezależnie od tego, jak dobrze dobrano jej punkty.
+Fragment pobieramy jako WAV (`/api/clip`), dekodujemy raz i zapętlamy
+w `AudioBufferSourceNode`, gdzie pętla jest bezszwowa z definicji.
+
+**Przenikanie** wmontowujemy w sam bufor: ogon wchodzi równomocowo w początek.
+To sprawia, że szew znika nawet wtedy, gdy przebiegi nie pasują kształtem —
+i tak właśnie robią to sprzętowe samplery. Suwak 0–60 ms, domyślnie 12 ms.
+Eksport stosuje to samo przenikanie, więc plik brzmi jak odsłuch.
+Pętla skraca się o długość przenikania — pasek pokazuje faktyczną długość.
+
 ## Domykanie pętli
 
 Przycisk **domknij** przesuwa koniec pętli tak, żeby przejście z końca na
@@ -95,6 +109,13 @@ się wartości pośrednich i traktuj je jako podpowiedź, nie wyrocznię.
 
 Pasek pętli pokazuje też tempo, które długość pętli implikuje przy jednym,
 dwóch i czterech taktach na cztery — pomaga trafić w siatkę.
+
+**Kolejność ma znaczenie.** Przycisk **do taktu** dociąga długość pętli do
+siatki tempa zmierzonego dla nagrania, dopiero potem **domknij** szuka
+dopasowania kształtu. Na materiale testowym zgodność rosła z 0,45 do 0,93
+właśnie po dociągnięciu do taktu — bo dopiero wtedy koniec pętli wypada
+w miejscu muzycznie odpowiadającym jej początkowi. Samo dopasowanie kształtu
+bez siatki szuka po omacku.
 
 ## Czego tu nie ma
 

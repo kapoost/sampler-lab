@@ -74,11 +74,30 @@ def slices(path: Path, max_seconds: float | None = None) -> list[dict]:
     return [asdict(s) for s in out]
 
 
-def export(path: Path, start: float, end: float, dest: Path, target_sr: int = 44100) -> Path:
+def crossfade_loop(y: np.ndarray, sr: int, fade: float) -> np.ndarray:
+    """Wmontowuje ogon w początek, żeby fragment zapętlał się bez szwu.
+
+    Kanały w wierszach. Wynik jest krótszy o długość przenikania — to samo,
+    co słychać w odsłuchu, więc eksport zgadza się z tym, co wybrałeś.
+    """
+    F = min(int(fade * sr), y.shape[1] // 3)
+    if F < 8:
+        return y
+    t = np.linspace(0, 1, F, endpoint=False)
+    g_out, g_in = np.cos(t * np.pi / 2), np.sin(t * np.pi / 2)
+    out = y[:, F:y.shape[1] - F].copy()
+    head = y[:, y.shape[1] - F:] * g_out + y[:, :F] * g_in
+    return np.concatenate([head, out], axis=1)
+
+
+def export(path: Path, start: float, end: float, dest: Path,
+           target_sr: int = 44100, fade: float = 0.0) -> Path:
     """Wycina fragment w pełnej jakości (nie z analitycznego 22 kHz) i zapisuje jako WAV 16-bit."""
     y, sr = librosa.load(path, sr=target_sr, mono=False, offset=start, duration=max(0.0, end - start))
     if y.ndim == 1:
         y = y[np.newaxis, :]
+    if fade > 0:
+        y = crossfade_loop(y, sr, fade)
     dest.parent.mkdir(parents=True, exist_ok=True)
     sf.write(dest, y.T, sr, subtype="PCM_16")
     return dest
