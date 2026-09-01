@@ -24,6 +24,11 @@
   #filters{display:flex;gap:10px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);
            background:#181b21;font-size:11px;color:var(--dim);flex-wrap:wrap}
   #filters input[type=number]{width:56px}
+  #loopbar{display:flex;gap:14px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--line);
+           background:#171a20;font-size:11px;color:var(--dim);flex-wrap:wrap}
+  #loopbar .grp{display:flex;gap:3px;align-items:center}
+  #loopbar button{padding:1px 5px;font-size:11px;min-width:34px}
+  #loopbar b{color:var(--warn);font-variant-numeric:tabular-nums;min-width:52px;text-align:center;font-weight:500}
   input,select{background:#101216;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
   input:focus,select:focus{outline:none;border-color:var(--acc)}
   #rows{overflow:auto;flex:1}
@@ -36,6 +41,7 @@
   tr:hover{background:#20242c}
   .bar{display:inline-block;height:11px;background:var(--acc);opacity:.45;vertical-align:middle}
   .num{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+  tr.multi{background:#3a3320;box-shadow:inset 0 0 0 1px var(--warn)}
   .tg{display:inline-block;background:#2b3b4d;color:#bcd8f7;border-radius:3px;padding:0 5px;margin-right:3px;font-size:11px}
   button{background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:4px;
          padding:3px 8px;cursor:pointer;font-size:12px}
@@ -78,6 +84,20 @@
     <span id="fCount"></span>
   </div>
 
+  <div id="loopbar">
+    <button id="loopBtn" class="on">pętla</button>
+    <span class="grp">start
+      <button data-edge="s" data-n="-0.1">−100</button><button data-edge="s" data-n="-0.01">−10</button>
+      <b id="lpStart">—</b>
+      <button data-edge="s" data-n="0.01">+10</button><button data-edge="s" data-n="0.1">+100</button></span>
+    <span class="grp">koniec
+      <button data-edge="e" data-n="-0.1">−100</button><button data-edge="e" data-n="-0.01">−10</button>
+      <b id="lpEnd">—</b>
+      <button data-edge="e" data-n="0.01">+10</button><button data-edge="e" data-n="0.1">+100</button></span>
+    <span>ms</span>
+    <span id="lpLen" style="color:var(--fg)"></span>
+    <span id="lpBpm" style="color:var(--acc)"></span>
+  </div>
   <div id="rows"><table>
     <thead><tr><th>#</th><th>kształt</th><th>start</th><th>dług.</th><th>dB</th><th>tagi</th><th>pad</th></tr></thead>
     <tbody id="tb"></tbody>
@@ -94,7 +114,7 @@
     <kbd>↑</kbd><kbd>↓</kbd> wiersz &nbsp; <kbd>spacja</kbd> odsłuch<br>
     <kbd>Enter</kbd> na pad &nbsp; <kbd>A</kbd>–<kbd>D</kbd> bank<br>
     <kbd>T</kbd> tagowanie &nbsp; <kbd>1</kbd>–<kbd>9</kbd> szybki tag<br>
-    <kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = własny zakres</span>
+    <kbd>L</kbd> pętla &nbsp; <kbd>[</kbd><kbd>]</kbd> start &nbsp; <kbd>,</kbd><kbd>.</kbd> koniec<br><kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = zaznacz wiele</span>
   </div>
   <h2>Chmura tagów</h2>
   <div id="cloud" style="padding:8px 10px;display:flex;gap:4px;flex-wrap:wrap"></div>
@@ -110,230 +130,310 @@
 <audio id="player"></audio>
 
 <script>
-const BANKS = ["A","B","C","D"];
-const PRESETS = ["głos","fraza","oddech","riff","akord","bas","perkusja","stopa","werbel","szum","radio","woda","przejście"];
-let tracks=[], cur=null, slices=[], view=[], row=0, bank="A", padCur=0, mode="track";
-let picks={}, fragTags={}, stopAt=null, searchRows=[], sel=null, drag=null;
-const player=document.getElementById("player"), $=id=>document.getElementById(id);
-const typing = () => ["INPUT","TEXTAREA"].includes(document.activeElement.tagName);
+const BANKS=["A","B","C","D"];
+const PRESETS=["głos","fraza","oddech","riff","akord","bas","perkusja","stopa","werbel","szum","radio","woda","przejście"];
+let tracks=[],cur=null,slices=[],view=[],row=0,bank="A",padCur=0,mode="track";
+let picks={},fragTags={},taggedFrags=[],searchRows=[];
+let sel=null,multi=[],drag=null,dragPx=0,stopAt=null,loopFrom=null,loop=true;
+const player=document.getElementById("player"),$=id=>document.getElementById(id);
+const typing=()=>["INPUT","TEXTAREA"].includes(document.activeElement.tagName);
+const plural=(n,a,b,c)=>{const d=n%10,e=n%100;
+  return n===1?a:(d>=2&&d<=4&&!(e>=12&&e<=14))?b:c;};
+const frag=n=>`${n} ${plural(n,"fragment","fragmenty","fragmentów")}`;
+const fragD=n=>`${n} ${n===1?"fragmentu":"fragmentów"}`;   // dopełniacz, po przyimku „z"
+const fmt=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,"0")}.${Math.floor(t*10%10)}`;
 
+/* ---------- start ---------- */
 async function boot(){
-  tracks = await (await fetch("/api/tracks")).json();
+  tracks=await (await fetch("/api/tracks")).json();
   const box=$("tracks");
   tracks.forEach(t=>{
-    const d=document.createElement("div"); d.className="trk"; d.dataset.id=t.id;
-    const g = t.gridded===1?'<span class="tag grid">równe</span>':t.gridded===0?'<span class="tag rub">rubato</span>':'';
+    const d=document.createElement("div");d.className="trk";d.dataset.id=t.id;
+    const g=t.gridded===1?'<span class="tag grid">równe</span>':t.gridded===0?'<span class="tag rub">rubato</span>':'';
     d.innerHTML=`<div class="n">${t.name}</div><div class="meta">
       ${t.bpm?`<span class="tag">${t.bpm} BPM</span>`:''}${t.key_name?`<span class="tag">${t.key_name}</span>`:''}${g}</div>`;
-    d.onclick=()=>load(t.id); box.appendChild(d);
+    d.onclick=()=>load(t.id);box.appendChild(d);
   });
-  PRESETS.forEach((t,i)=>{ const b=document.createElement("button");
-    b.textContent = i<9 ? `${i+1} ${t}` : t; b.onclick=()=>toggleTag(t); $("preset").appendChild(b); });
-  drawBanks(); drawPads(); cloud();
-  mode="track"; $("tagQuery").value=""; syncTabs();
+  PRESETS.forEach((t,i)=>{const b=document.createElement("button");
+    b.textContent=i<9?`${i+1} ${t}`:t;b.onclick=()=>toggleTag(t);$("preset").appendChild(b);});
+  drawBanks();drawPads();cloud();
+  mode="track";$("tagQuery").value="";syncTabs();
   if(tracks.length) await load(tracks[0].id);
 }
 
 async function load(id){
-  mode="track"; syncTabs();
-  document.querySelectorAll(".trk").forEach(e=>e.classList.toggle("sel", e.dataset.id===id));
+  mode="track";clearSel();syncTabs();
+  document.querySelectorAll(".trk").forEach(e=>e.classList.toggle("sel",e.dataset.id===id));
   $("msg").textContent="liczę cięcia...";
   const d=await (await fetch("/api/track/"+id)).json();
-  cur=d; slices=d.slices; row=0;
+  cur=d;slices=d.slices;row=0;
   player.src="/audio/"+id;
-  fragTags={};
-  (await (await fetch("/api/frags?track_id="+id)).json()).forEach(f=>fragTags[f.slice_idx]=f.tags);
-  $("sub").textContent = `${slices.length} fragmentów` + (d.wave.duration >= d.capped-1 ? ` (pierwsze ${d.capped|0} s)` : "");
+  taggedFrags=await (await fetch("/api/frags?track_id="+id)).json();
+  fragTags={};taggedFrags.forEach(f=>fragTags[f.slice_idx]=f.tags);
+  $("sub").textContent=`${slices.length} fragmentów`+(d.wave.duration>=d.capped-1?` (pierwsze ${d.capped|0} s)`:"");
   $("msg").textContent="";
-  drawWave(); refilter();
+  refilter();
 }
 
+/* ---------- filtry ---------- */
 function refilter(){
-  const lo=+$("fMinDur").value, hi=+$("fMaxDur").value, db=+$("fMinDb").value, only=$("fTagged").checked;
-  view = slices.filter(s => s.dur>=lo && s.dur<=hi && s.rms_db>=db && (!only || (fragTags[s.idx]||[]).length));
+  const lo=+$("fMinDur").value,hi=+$("fMaxDur").value,db=+$("fMinDb").value,only=$("fTagged").checked;
+  view=slices.filter(s=>s.dur>=lo&&s.dur<=hi&&s.rms_db>=db&&(!only||(fragTags[s.idx]||[]).length));
   if(row>=view.length) row=Math.max(0,view.length-1);
-  $("fCount").textContent = `${view.length} z ${slices.length}`;
-  drawRows(); drawWave();
+  $("fCount").textContent=`${view.length} z ${slices.length}`;
+  drawRows();drawWave();
 }
 ["fMinDur","fMaxDur","fMinDb","fTagged"].forEach(id=>$(id).oninput=refilter);
 
+/* ---------- kandydaci do zaznaczenia: przefiltrowane cięcia + WSZYSTKIE otagowane ---------- */
+function candidates(){
+  const by=new Map();
+  view.forEach(s=>by.set(s.idx,{slice_idx:s.idx,start:s.start,end:s.end,dur:s.dur,rms_db:s.rms_db,tid:cur.id}));
+  taggedFrags.forEach(f=>by.set(f.slice_idx,{slice_idx:f.slice_idx,start:f.start,end:f.end,
+                                             dur:f.dur,rms_db:f.rms_db,tid:cur.id}));
+  return [...by.values()].sort((a,b)=>a.start-b.start);
+}
+const inMulti=idx=>multi.some(f=>f.slice_idx===idx);
+function clearSel(){sel=null;multi=[];$("selInfo").textContent="";}
+
+/* ---------- fala ---------- */
 function drawWave(){
   if(mode!=="track"||!cur) return;
-  const c=$("wave"), ctx=c.getContext("2d");
-  c.width=c.clientWidth*devicePixelRatio; c.height=100*devicePixelRatio;
+  const c=$("wave"),ctx=c.getContext("2d");
+  c.width=c.clientWidth*devicePixelRatio;c.height=100*devicePixelRatio;
   ctx.scale(devicePixelRatio,devicePixelRatio);
-  const W=c.clientWidth,H=100,p=cur.wave.peaks,dur=cur.wave.duration||1;
-  ctx.clearRect(0,0,W,H); ctx.fillStyle="#39414f";
-  p.forEach((v,i)=>{const x=i/p.length*W,h=v*(H-14);ctx.fillRect(x,(H-h)/2,Math.max(1,W/p.length),h);});
+  const W=c.clientWidth,H=100,p=cur.wave.peaks,dur=cur.wave.duration||1,X=t=>t/dur*W;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#39414f";
+  p.forEach((v,i)=>{const x=i/p.length*W,h=v*(H-22);ctx.fillRect(x,(H-22-h)/2+4,Math.max(1,W/p.length),h);});
   ctx.fillStyle="rgba(99,210,154,.55)";
-  view.forEach(s=>ctx.fillRect(s.start/dur*W,H-4,Math.max(1,(s.end-s.start)/dur*W),4));
+  view.forEach(s=>ctx.fillRect(X(s.start),H-14,Math.max(1,X(s.end)-X(s.start)),4));
+  ctx.fillStyle="#e0b25a";
+  taggedFrags.forEach(f=>ctx.fillRect(X(f.start),H-7,Math.max(2,X(f.end)-X(f.start)),5));
   const s=view[row];
-  if(s&&!sel){ctx.fillStyle="rgba(111,178,255,.22)";ctx.fillRect(s.start/dur*W,0,Math.max(2,(s.end-s.start)/dur*W),H);}
-  const d = drag || sel;
-  if(d){
-    const a=Math.min(d.start,d.end)/dur*W, b=Math.max(d.start,d.end)/dur*W;
-    ctx.fillStyle="rgba(224,178,90,.26)"; ctx.fillRect(a,0,Math.max(2,b-a),H);
-    ctx.strokeStyle="#e0b25a"; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(a+.5,0); ctx.lineTo(a+.5,H); ctx.moveTo(b-.5,0); ctx.lineTo(b-.5,H); ctx.stroke();
-  }
+  if(s&&!sel&&!multi.length){ctx.fillStyle="rgba(111,178,255,.22)";
+    ctx.fillRect(X(s.start),0,Math.max(2,X(s.end)-X(s.start)),H-16);}
+  multi.forEach(f=>{ctx.fillStyle="rgba(224,178,90,.30)";
+    ctx.fillRect(X(f.start),0,Math.max(2,X(f.end)-X(f.start)),H-16);});
+  const d=drag||sel;
+  if(d){const a=X(Math.min(d.start,d.end)),b=X(Math.max(d.start,d.end));
+    ctx.fillStyle="rgba(224,178,90,.12)";ctx.fillRect(a,0,Math.max(2,b-a),H);
+    ctx.strokeStyle="#e0b25a";ctx.lineWidth=1;ctx.beginPath();
+    ctx.moveTo(a+.5,0);ctx.lineTo(a+.5,H);ctx.moveTo(b-.5,0);ctx.lineTo(b-.5,H);ctx.stroke();}
 }
-const timeAt = e => Math.max(0, Math.min(cur.wave.duration||1,
-  (e.offsetX/$("wave").clientWidth)*(cur.wave.duration||1)));
-let dragPx=0;
-$("wave").onmousedown=e=>{ if(mode!=="track"||!cur) return;
-  drag={start:timeAt(e), end:timeAt(e)}; dragPx=e.offsetX; drawWave(); };
-$("wave").onmousemove=e=>{ if(!drag) return; drag.end=timeAt(e); drawWave(); };
-window.addEventListener("mouseup", e=>{
-  if(!drag) return;
-  const moved = Math.abs(e.offsetX-dragPx) > 3;
-  const a=Math.min(drag.start,drag.end), b=Math.max(drag.start,drag.end);
+
+const timeAt=e=>Math.max(0,Math.min(cur.wave.duration||1,(e.offsetX/$("wave").clientWidth)*(cur.wave.duration||1)));
+$("wave").onmousedown=e=>{if(mode!=="track"||!cur)return;drag={start:timeAt(e),end:timeAt(e)};dragPx=e.offsetX;drawWave();};
+$("wave").onmousemove=e=>{if(!drag)return;drag.end=timeAt(e);drawWave();};
+window.addEventListener("mouseup",e=>{
+  if(!drag)return;
+  const moved=Math.abs(e.offsetX-dragPx)>3;
+  const a=Math.min(drag.start,drag.end),b=Math.max(drag.start,drag.end);
   drag=null;
-  if(moved && b-a >= 0.05){
-    sel={start:+a.toFixed(3), end:+b.toFixed(3)};
-    const L=sel.end-sel.start;
-    const el=$("selInfo");
-    el.textContent=`zaznaczenie ${fmt(sel.start)} – ${fmt(sel.end)}  (${L.toFixed(2)} s)`
-      + (L>6 ? "  — długie jak na pad, pamięć MPC to 2 GB" : "");
-    el.style.color = L>6 ? "#e07a5a" : "var(--warn)";
-    drawWave(); drawRows(); audition();
-  } else if(cur && mode==="track"){
-    sel=null; $("selInfo").textContent="";
-    let best=0,bd=1e9; view.forEach((s,i)=>{const d=Math.abs(s.start-a); if(d<bd){bd=d;best=i;}});
-    row=best; drawRows(); drawWave(); audition();
+  if(!moved){                                   // kliknięcie: skok do najbliższego cięcia
+    clearSel();
+    let best=0,bd=1e9;view.forEach((s,i)=>{const d=Math.abs(s.start-a);if(d<bd){bd=d;best=i;}});
+    row=best;drawRows();drawWave();audition();return;
   }
+  const hit=candidates().filter(f=>f.end>a&&f.start<b);   // przecięcie z zakresem
+  sel={start:+a.toFixed(3),end:+b.toFixed(3)};
+  multi=hit;
+  const tagged=hit.filter(f=>(fragTags[f.slice_idx]||[]).length).length;
+  const el=$("selInfo");
+  if(hit.length){
+    el.textContent=`zaznaczono ${frag(hit.length)}`
+      +(tagged?` (${tagged} otagowanych)`:"")+`  ${fmt(a)} – ${fmt(b)}`;
+    el.style.color="var(--warn)";
+  }else{
+    const L=b-a;
+    el.textContent=`własny zakres ${fmt(a)} – ${fmt(b)}  (${L.toFixed(2)} s)`
+      +(L>6?"  — długi jak na pad, pamięć MPC to 2 GB":"");
+    el.style.color=L>6?"#e07a5a":"var(--warn)";
+  }
+  drawWave();drawRows();audition();
 });
 
+/* ---------- na czym działamy ---------- */
+function peakRms(a,b){
+  const p=cur.wave.peaks,dur=cur.wave.duration||1;
+  const i0=Math.floor(a/dur*p.length),i1=Math.max(i0+1,Math.ceil(b/dur*p.length));
+  const seg=p.slice(i0,i1);if(!seg.length)return -60;
+  return +(20*Math.log10(seg.reduce((x,y)=>x+y,0)/seg.length+1e-6)).toFixed(1);
+}
+function targets(){
+  if(mode==="search") return searchRows[row]?[{...searchRows[row],tid:searchRows[row].track_id}]:[];
+  if(multi.length) return multi;
+  if(sel) return [{slice_idx:-Math.round(sel.start*1000),start:sel.start,end:sel.end,
+                   dur:+(sel.end-sel.start).toFixed(3),rms_db:peakRms(sel.start,sel.end),tid:cur.id}];
+  const s=view[row];
+  return s?[{slice_idx:s.idx,start:s.start,end:s.end,dur:s.dur,rms_db:s.rms_db,tid:cur.id}]:[];
+}
+
+/* ---------- odtwarzanie z pętlą ---------- */
+async function play(start,end,tid){
+  try{
+    if(tid&&!player.src.endsWith("/audio/"+tid)) player.src="/audio/"+tid;
+    if(player.readyState<1){
+      $("msg").textContent="wczytuję...";
+      await new Promise((ok,bad)=>{
+        const done=()=>{clr();ok();},fail=()=>{clr();bad(new Error("nie udało się wczytać pliku"));};
+        const to=setTimeout(fail,15000);
+        const clr=()=>{clearTimeout(to);player.removeEventListener("loadedmetadata",done);
+                       player.removeEventListener("error",fail);};
+        player.addEventListener("loadedmetadata",done);player.addEventListener("error",fail);
+      });
+    }
+    loopFrom=start;stopAt=end;player.currentTime=start;
+    drawLoopBar();
+    await player.play();
+    $("msg").textContent=`${loop?"pętla":"odtwarzam"} ${start.toFixed(2)}–${end.toFixed(2)} s`;
+  }catch(e){stopAt=null;$("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);}
+}
+function audition(){
+  const t=targets();if(!t.length)return;
+  play(Math.min(...t.map(f=>f.start)),Math.max(...t.map(f=>f.end)),t[0].tid);
+}
+player.ontimeupdate=()=>{
+  if(stopAt===null||player.currentTime<stopAt) return;
+  if(loop&&loopFrom!==null) player.currentTime=loopFrom;
+  else {player.pause();stopAt=null;}
+};
+player.onerror=()=>{$("msg").textContent="błąd wczytywania dźwięku";};
+$("loopBtn").onclick=()=>toggleLoop();
+function toggleLoop(){
+  loop=!loop;
+  $("loopBtn").className=loop?"on":"";
+  $("loopBtn").title=loop?"pętla włączona":"pętla wyłączona";
+  drawLoopBar();
+}
+
+/* Dostrajanie granic w trakcie grania. Pokazuje długość i tempo, które ta
+   długość implikuje przy 1, 2 i 4 taktach na cztery — ułatwia domknięcie
+   pętli tak, żeby wpadła w siatkę. */
+function drawLoopBar(){
+  const ok = loopFrom!==null && stopAt!==null;
+  $("lpStart").textContent = ok ? loopFrom.toFixed(3) : "—";
+  $("lpEnd").textContent   = ok ? stopAt.toFixed(3)   : "—";
+  if(!ok){ $("lpLen").textContent=""; $("lpBpm").textContent=""; return; }
+  const L = stopAt - loopFrom;
+  $("lpLen").textContent = `długość ${L.toFixed(3)} s`;
+  const opts = [1,2,4]
+    .map(b=>({b, bpm:60*4*b/L}))
+    .filter(o=>o.bpm>=55&&o.bpm<=190)
+    .map(o=>`${o.bpm.toFixed(1)} BPM (${o.b} ${o.b===1?"takt":o.b===2?"takty":"takty"})`);
+  $("lpBpm").textContent = opts.length ? "≈ "+opts.join("  /  ") : "";
+}
+function nudge(edge,d){
+  if(loopFrom===null||stopAt===null) return;
+  const dur=cur?.wave.duration||1e9;
+  if(edge==="s") loopFrom=Math.max(0,Math.min(stopAt-0.05,+(loopFrom+d).toFixed(3)));
+  else           stopAt  =Math.min(dur,Math.max(loopFrom+0.05,+(stopAt+d).toFixed(3)));
+  if(sel){sel.start=loopFrom;sel.end=stopAt;drawWave();}
+  if(player.currentTime<loopFrom||player.currentTime>stopAt) player.currentTime=loopFrom;
+  drawLoopBar();
+}
+document.querySelectorAll("#loopbar button[data-edge]").forEach(b=>
+  b.onclick=()=>nudge(b.dataset.edge,+b.dataset.n));
+
+/* ---------- tagi ---------- */
+async function putTags(f,tags){
+  const r=await (await fetch("/api/frag",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({track_id:f.tid,slice_idx:f.slice_idx,start:f.start,end:f.end,
+                         dur:f.dur,rms_db:f.rms_db,tags})})).json();
+  if(r.tags.length) fragTags[f.slice_idx]=r.tags; else delete fragTags[f.slice_idx];
+}
+async function commit(n,słowo,dopełniacz){
+  if(cur) taggedFrags=await (await fetch("/api/frags?track_id="+cur.id)).json();
+  $("msg").textContent=`${słowo} ${dopełniacz?fragD(n):frag(n)}`;
+  refilter();cloud();
+}
+async function saveTags(tags){                 // pole tekstowe: ten sam zestaw na wszystkie
+  const frags=targets();if(!frags.length)return;
+  await Promise.all(frags.map(f=>putTags(f,tags)));
+  commit(frags.length,"otagowano");
+}
+async function toggleTag(t){                   // przełącznik: zdejmij, jeśli wszystkie już mają
+  const frags=targets();if(!frags.length)return;
+  const all=frags.every(f=>(fragTags[f.slice_idx]||[]).includes(t));
+  await Promise.all(frags.map(f=>{
+    const has=new Set(fragTags[f.slice_idx]||[]);
+    all?has.delete(t):has.add(t);
+    return putTags(f,[...has]);
+  }));
+  commit(frags.length, all?`zdjęto „${t}" z`:`otagowano „${t}"`, all);
+}
+$("tagBox").onkeydown=e=>{
+  if(e.key==="Enter"){saveTags($("tagBox").value.split(",").map(x=>x.trim()).filter(Boolean));e.preventDefault();}
+  if(e.key==="Escape") $("tagBox").blur();
+};
+
+/* ---------- lista ---------- */
 function drawRows(){
-  const tb=$("tb"); tb.innerHTML="";
+  const tb=$("tb");tb.innerHTML="";
   if(mode==="search") return drawSearch();
   const maxd=Math.max(...view.map(s=>s.dur),1);
   view.forEach((s,i)=>{
-    const tr=document.createElement("tr"), key=padOf(s.idx), tg=fragTags[s.idx]||[];
-    tr.className=(i===row?"cur ":"")+(key?"on":"");
+    const tr=document.createElement("tr"),key=padOf(s.idx),tg=fragTags[s.idx]||[];
+    tr.className=(inMulti(s.idx)?"multi ":(i===row&&!sel?"cur ":""))+(key?"on":"");
     tr.innerHTML=`<td class="num">${s.idx+1}</td>
       <td><span class="bar" style="width:${Math.round(s.dur/maxd*80)+4}px"></span></td>
       <td class="num">${fmt(s.start)}</td><td class="num">${s.dur.toFixed(2)}</td>
       <td class="num">${s.rms_db.toFixed(0)}</td>
-      <td>${tg.map(t=>`<span class="tg">${t}</span>`).join("")}</td>
-      <td>${key||""}</td>`;
-    tr.onclick=()=>{row=i;drawRows();drawWave();audition();};
+      <td>${tg.map(t=>`<span class="tg">${t}</span>`).join("")}</td><td>${key||""}</td>`;
+    tr.onclick=()=>{clearSel();row=i;drawRows();drawWave();audition();};
     tb.appendChild(tr);
   });
-  const c=tb.querySelector("tr.cur"); if(c)c.scrollIntoView({block:"nearest"});
-  const _f=currentFrag(); $("tagBox").value=_f?(fragTags[_f.slice_idx]||[]).join(", "):"";
-  $("cnt").textContent=Object.keys(picks).length+" zaznaczonych";
+  const c=tb.querySelector("tr.cur")||tb.querySelector("tr.multi");if(c)c.scrollIntoView({block:"nearest"});
+  const t=targets();
+  $("tagBox").value=t.length===1?(fragTags[t[0].slice_idx]||[]).join(", "):"";
+  $("cnt").textContent=Object.keys(picks).length+" na padach";
 }
-
 function drawSearch(){
   const tb=$("tb");
   if(!searchRows.length){
     const q=$("tagQuery").value.trim();
     tb.innerHTML=`<tr><td colspan="7" style="padding:20px;color:var(--dim)">`+
-      (q ? `Brak fragmentów z tagami: <b>${q}</b>.`
-         : `Nic jeszcze nie otagowane.`)+
+      (q?`Brak fragmentów z tagami: <b>${q}</b>.`:`Nic jeszcze nie otagowane.`)+
       ` Wróć do zakładki <b>Nagranie</b>, zaznacz fragment i otaguj go klawiszami `+
       `<kbd>1</kbd>–<kbd>9</kbd> albo <kbd>T</kbd>.</td></tr>`;
-    $("sub").textContent="0 otagowanych fragmentów";
-    return;
+    $("sub").textContent="0 otagowanych fragmentów";return;
   }
   searchRows.forEach((f,i)=>{
-    const tr=document.createElement("tr"); tr.className=(i===row?"cur":"");
+    const tr=document.createElement("tr");tr.className=(i===row?"cur":"");
     tr.innerHTML=`<td class="num">${i+1}</td><td>${f.name.slice(0,34)}</td>
       <td class="num">${fmt(f.start)}</td><td class="num">${f.dur.toFixed(2)}</td>
       <td class="num">${f.rms_db.toFixed(0)}</td>
       <td>${f.tags.map(t=>`<span class="tg">${t}</span>`).join("")}</td><td></td>`;
-    tr.onclick=()=>{row=i;drawRows();auditionSearch();};
+    tr.onclick=()=>{row=i;drawRows();audition();};
     tb.appendChild(tr);
   });
   $("sub").textContent=`${searchRows.length} otagowanych fragmentów`;
 }
 
-const fmt=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,"0")}.${Math.floor(t*10%10)}`;
-const padOf=idx=>Object.keys(picks).find(k=>picks[k].track_id===cur.id&&picks[k].idx===idx);
-
-async function play(start, end, tid){
-  try{
-    if(tid && !player.src.endsWith("/audio/"+tid)) player.src="/audio/"+tid;
-    // Przypisanie currentTime przed wczytaniem metadanych jest po cichu ignorowane.
-    if(player.readyState < 1){
-      $("msg").textContent="wczytuję...";
-      await new Promise((ok,bad)=>{
-        const done=()=>{clear();ok();}, fail=()=>{clear();bad(new Error("nie udało się wczytać pliku"));};
-        const to=setTimeout(fail, 15000);
-        const clear=()=>{clearTimeout(to);
-          player.removeEventListener("loadedmetadata",done); player.removeEventListener("error",fail);};
-        player.addEventListener("loadedmetadata",done); player.addEventListener("error",fail);
-      });
-    }
-    player.currentTime=start; stopAt=end;
-    await player.play();   // przeglądarka potrafi odmówić — bez await błąd ginie
-    $("msg").textContent=`odtwarzam ${start.toFixed(2)}–${end.toFixed(2)} s`;
-  }catch(e){
-    stopAt=null;
-    $("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);
-  }
-}
-function peakRms(a,b){          // przyblizenie z podgladu fali — do filtrow i podgladu, nie do pomiaru
-  const p=cur.wave.peaks, dur=cur.wave.duration||1;
-  const i0=Math.floor(a/dur*p.length), i1=Math.max(i0+1,Math.ceil(b/dur*p.length));
-  const seg=p.slice(i0,i1); if(!seg.length) return -60;
-  return +(20*Math.log10(seg.reduce((x,y)=>x+y,0)/seg.length+1e-6)).toFixed(1);
-}
-function currentFrag(){
-  if(mode==="search") return searchRows[row] ? {...searchRows[row], tid:searchRows[row].track_id} : null;
-  if(sel) return {slice_idx:-Math.round(sel.start*1000), start:sel.start, end:sel.end,
-                  dur:+(sel.end-sel.start).toFixed(3), rms_db:peakRms(sel.start,sel.end), tid:cur.id};
-  const s=view[row];
-  return s ? {slice_idx:s.idx, start:s.start, end:s.end, dur:s.dur, rms_db:s.rms_db, tid:cur.id} : null;
-}
-function audition(){const f=currentFrag(); if(f) play(f.start, f.end, f.tid);}
-function auditionSearch(){const f=searchRows[row]; if(f) play(f.start, f.end, f.track_id);}
-player.ontimeupdate=()=>{if(stopAt!==null&&player.currentTime>=stopAt){player.pause();stopAt=null;}};
-player.onerror=()=>{$("msg").textContent="błąd wczytywania dźwięku";};
-
-async function saveTags(tags){
-  const f=currentFrag(); if(!f)return;
-  const r=await (await fetch("/api/frag",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({track_id:f.tid,slice_idx:f.slice_idx,start:f.start,end:f.end,
-                         dur:f.dur,rms_db:f.rms_db,tags})})).json();
-  if(r.tags.length) fragTags[f.slice_idx]=r.tags; else delete fragTags[f.slice_idx];
-  refilter(); cloud();
-}
-function toggleTag(t){
-  const f=currentFrag(); if(!f)return;
-  const has=new Set(fragTags[f.slice_idx]||[]);
-  has.has(t)?has.delete(t):has.add(t);
-  saveTags([...has]);
-}
-$("tagBox").onkeydown=e=>{
-  if(e.key==="Enter"){ saveTags($("tagBox").value.split(",").map(x=>x.trim()).filter(Boolean)); e.preventDefault(); }
-  if(e.key==="Escape") $("tagBox").blur();
-};
-
-async function cloud(){
-  const c=await (await fetch("/api/tagcloud")).json();
-  $("cloud").innerHTML = c.length ? "" : '<span style="color:var(--dim);font-size:11px">jeszcze nic nie otagowane</span>';
-  c.forEach(t=>{const b=document.createElement("button");
-    b.textContent=`${t.tag} ${t.n}`; b.style.fontSize="11px";
-    b.onclick=()=>{$("tagQuery").value=t.tag; doSearch();}; $("cloud").appendChild(b);});
-}
-
+/* ---------- zakładki i szukanie ---------- */
 function syncTabs(){
-  $("tabTrack").className = mode==="track"?"on":"";
-  $("tabSearch").className = mode==="search"?"on":"";
-  $("tagQuery").classList.toggle("hidden", mode!=="search");
-  $("wave").classList.toggle("hidden", mode!=="track");
-  $("filters").classList.toggle("hidden", mode!=="track");
-  $("preset").classList.toggle("hidden", mode!=="track");
+  $("tabTrack").className=mode==="track"?"on":"";
+  $("tabSearch").className=mode==="search"?"on":"";
+  $("tagQuery").classList.toggle("hidden",mode!=="search");
+  $("wave").classList.toggle("hidden",mode!=="track");
+  $("filters").classList.toggle("hidden",mode!=="track");
+  $("preset").classList.toggle("hidden",mode!=="track");
 }
-$("tabTrack").onclick=()=>{mode="track";row=0;syncTabs();refilter();};
-$("tabSearch").onclick=()=>{mode="search";row=0;syncTabs();doSearch();};
+$("tabTrack").onclick=()=>{mode="track";row=0;clearSel();syncTabs();refilter();};
+$("tabSearch").onclick=()=>{mode="search";row=0;clearSel();syncTabs();doSearch();};
 $("tagQuery").oninput=()=>doSearch();
 async function doSearch(){
   searchRows=await (await fetch("/api/frags?tags="+encodeURIComponent($("tagQuery").value))).json();
-  row=0; $("tb").innerHTML=""; drawSearch();
+  row=0;$("tb").innerHTML="";drawSearch();
+}
+async function cloud(){
+  const c=await (await fetch("/api/tagcloud")).json();
+  $("cloud").innerHTML=c.length?"":'<span style="color:var(--dim);font-size:11px">jeszcze nic nie otagowane</span>';
+  c.forEach(t=>{const b=document.createElement("button");b.textContent=`${t.tag} ${t.n}`;b.style.fontSize="11px";
+    b.onclick=()=>{mode="search";syncTabs();$("tagQuery").value=t.tag;doSearch();};$("cloud").appendChild(b);});
 }
 
+/* ---------- pady ---------- */
 function drawBanks(){const b=$("banks");b.innerHTML="";
   BANKS.forEach(x=>{const t=document.createElement("button");t.textContent=x;t.className=x===bank?"on":"";
     t.onclick=()=>{bank=x;padCur=0;drawBanks();drawPads();};b.appendChild(t);});}
@@ -342,41 +442,51 @@ function drawPads(){const g=$("pads");g.innerHTML="";
     d.className="pad"+(picks[k]?" full":"")+(i===padCur?" cur":"");
     d.textContent=picks[k]?picks[k].label.slice(0,13):(i+1);
     d.onclick=()=>{if(picks[k])delete picks[k];padCur=i;drawPads();drawRows();};g.appendChild(d);}}
+const padOf=idx=>Object.keys(picks).find(k=>picks[k].track_id===cur?.id&&picks[k].idx===idx);
 
 function assign(){
-  const src = currentFrag();
-  if(!src) return;
-  let i=padCur; while(i<16&&picks[bank+String(i+1).padStart(2,"0")])i++;
-  if(i>=16){$("msg").textContent="bank "+bank+" pełny";return;}
-  const k=bank+String(i+1).padStart(2,"0");
-  const nm  = mode==="search" ? src.name : cur.name;
-  picks[k]={track_id:src.tid, idx:src.slice_idx, start:src.start, end:src.end,
-            label:`${nm.slice(0,18)}_${src.start.toFixed(1)}`};
-  padCur=Math.min(15,i+1);
-  const len = mode==="search" ? searchRows.length : view.length;
-  if(!sel && row<len-1) row++;
-  drawPads(); drawRows();
-  if(mode==="track") drawWave();
+  const frags=targets();if(!frags.length)return;
+  const nm=mode==="search"?null:cur.name;
+  let placed=0;
+  for(const f of frags){
+    let i=padCur;while(i<16&&picks[bank+String(i+1).padStart(2,"0")])i++;
+    if(i>=16){$("msg").textContent=`bank ${bank} pełny — przypisano ${placed} z ${frags.length}`;break;}
+    const k=bank+String(i+1).padStart(2,"0");
+    const label=(nm||searchRows[row]?.name||"frag").slice(0,18)+"_"+f.start.toFixed(1);
+    picks[k]={track_id:f.tid,idx:f.slice_idx,start:f.start,end:f.end,label};
+    padCur=Math.min(15,i+1);placed++;
+  }
+  if(placed===frags.length) $("msg").textContent=`na pady: ${frag(placed)}`;
+  const len=mode==="search"?searchRows.length:view.length;
+  if(!sel&&!multi.length&&row<len-1) row++;
+  drawPads();drawRows();drawWave();
 }
 
+/* ---------- klawiatura ---------- */
 document.onkeydown=e=>{
-  if(typing()) return;
-  const len = mode==="search" ? searchRows.length : view.length;
-  if(e.key==="ArrowDown"){sel=null;$("selInfo").textContent="";row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
-  else if(e.key==="ArrowUp"){sel=null;$("selInfo").textContent="";row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
-  else if(e.key===" "){mode==="search"?auditionSearch():audition();e.preventDefault();}
+  if(typing())return;
+  const len=mode==="search"?searchRows.length:view.length;
+  if(e.key==="ArrowDown"){clearSel();row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
+  else if(e.key==="ArrowUp"){clearSel();row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
+  else if(e.key===" "){audition();e.preventDefault();}
   else if(e.key==="Enter"){assign();e.preventDefault();}
-  else if(e.key==="Escape"){player.pause();stopAt=null;
-    if(sel){sel=null;$("selInfo").textContent="";drawWave();drawRows();}}
+  else if(e.key==="Escape"){player.pause();stopAt=null;loopFrom=null;drawLoopBar();
+    if(sel||multi.length){clearSel();drawWave();drawRows();}}
   else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
+  else if(e.key==="l"||e.key==="L"){toggleLoop();}
+  else if(e.key==="["){nudge("s",e.shiftKey?-0.1:-0.01);e.preventDefault();}
+  else if(e.key==="]"){nudge("s",e.shiftKey? 0.1: 0.01);e.preventDefault();}
+  else if(e.key===","){nudge("e",e.shiftKey?-0.1:-0.01);e.preventDefault();}
+  else if(e.key==="."){nudge("e",e.shiftKey? 0.1: 0.01);e.preventDefault();}
   else if(/^[1-9]$/.test(e.key)&&mode==="track"){const t=PRESETS[+e.key-1];if(t)toggleTag(t);}
   else if(/^[a-dA-D]$/.test(e.key)){bank=e.key.toUpperCase();padCur=0;drawBanks();drawPads();}
 };
 
+/* ---------- eksport ---------- */
 $("exp").onclick=async()=>{
   const items=Object.entries(picks).map(([k,v])=>({track_id:v.track_id,start:v.start,end:v.end,
     bank:k[0],pad:parseInt(k.slice(1)),label:v.label}));
-  if(!items.length){$("msg").textContent="nic nie zaznaczone";return;}
+  if(!items.length){$("msg").textContent="żaden pad nie jest obsadzony";return;}
   $("msg").textContent="wycinam...";
   const r=await (await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({items})})).json();
