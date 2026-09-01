@@ -67,10 +67,34 @@ nagrania z domeny publicznej z archive.org, jeśli chcesz mieć na czym testowa�
 | `A`–`D` | bank |
 | `1`–`9` | szybki tag |
 | `T` | pole tagów |
-| `Esc` | stop |
+| `L` | pętla wł./wył. |
+| `F` | domknij pętlę |
+| `[` `]` | granica początku pętli (Shift = 100 ms) |
+| `,` `.` | granica końca pętli |
+| `Esc` | stop / zdejmij zaznaczenie |
+
+Przeciągnięcie po fali zaznacza wszystkie fragmenty przecinające zakres —
+tagowanie, przypisanie na pady i eksport działają wtedy hurtowo. Jeśli zakres
+nie trafia w żaden fragment, staje się samodzielnym zaznaczeniem.
 
 Zakładka **Szukaj** przegląda otagowane fragmenty ze wszystkich nagrań naraz.
 Wiele tagów działa jak koniunkcja.
+
+## Domykanie pętli
+
+Przycisk **domknij** przesuwa koniec pętli tak, żeby przejście z końca na
+początek było dla ucha kontynuacją, a nie cięciem. Kryterium: fragment tuż
+przed końcem ma wyglądać jak fragment tuż przed początkiem — szukamy przez
+znormalizowaną korelację w promieniu 80 ms, a potem dociągamy obie granice do
+przejść przez zero w górę, żeby nie było trzasku.
+
+Zwracana zgodność mówi, na ile się udało. Na sygnale okresowym 220 Hz
+dopasowanie daje dokładną wielokrotność okresu przy zgodności 1,000; na białym
+szumie — 0,111, bo nie ma czego dopasować. Na prawdziwym materiale spodziewaj
+się wartości pośrednich i traktuj je jako podpowiedź, nie wyrocznię.
+
+Pasek pętli pokazuje też tempo, które długość pętli implikuje przy jednym,
+dwóch i czterech taktach na cztery — pomaga trafić w siatkę.
 
 ## Czego tu nie ma
 

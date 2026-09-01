@@ -30,6 +30,7 @@
   #loopbar button{padding:1px 5px;font-size:11px;min-width:34px}
   #play,#stop{min-width:30px;font-size:13px;line-height:1.1}
   #play.on{background:var(--ok);color:#0b0d10;border-color:var(--ok)}
+  #fit{min-width:56px}
   #loopbar b{color:var(--warn);font-variant-numeric:tabular-nums;min-width:52px;text-align:center;font-weight:500}
   input,select{background:#101216;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
   input:focus,select:focus{outline:none;border-color:var(--acc)}
@@ -100,7 +101,9 @@
       <button data-edge="e" data-n="0.01">+10</button><button data-edge="e" data-n="0.1">+100</button></span>
     <span>ms</span>
     <span id="lpLen" style="color:var(--fg)"></span>
+    <button id="fit" title="dociągnij granice tak, żeby pętla domykała się bez szwu (F)">domknij</button>
     <span id="lpBpm" style="color:var(--acc)"></span>
+    <span id="lpFit"></span>
   </div>
   <div id="rows"><table>
     <thead><tr><th>#</th><th>kształt</th><th>start</th><th>dług.</th><th>dB</th><th>tagi</th><th>pad</th></tr></thead>
@@ -118,7 +121,8 @@
     <kbd>↑</kbd><kbd>↓</kbd> wiersz &nbsp; <kbd>spacja</kbd> odsłuch<br>
     <kbd>Enter</kbd> na pad &nbsp; <kbd>A</kbd>–<kbd>D</kbd> bank<br>
     <kbd>T</kbd> tagowanie &nbsp; <kbd>1</kbd>–<kbd>9</kbd> szybki tag<br>
-    <kbd>L</kbd> pętla &nbsp; <kbd>[</kbd><kbd>]</kbd> start &nbsp; <kbd>,</kbd><kbd>.</kbd> koniec<br><kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = zaznacz wiele</span>
+    <kbd>L</kbd> pętla &nbsp; <kbd>F</kbd> domknij pętlę<br>
+    <kbd>[</kbd><kbd>]</kbd> start &nbsp; <kbd>,</kbd><kbd>.</kbd> koniec<br><kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = zaznacz wiele</span>
   </div>
   <h2>Chmura tagów</h2>
   <div id="cloud" style="padding:8px 10px;display:flex;gap:4px;flex-wrap:wrap"></div>
@@ -288,6 +292,7 @@ async function play(start,end,tid){
       });
     }
     loopFrom=start;stopAt=end;player.currentTime=start;
+    $("lpFit").textContent="";
     drawLoopBar();
     await player.play();
     $("msg").textContent=`${loop?"pętla":"odtwarzam"} ${start.toFixed(2)}–${end.toFixed(2)} s`;
@@ -362,6 +367,30 @@ function nudge(edge,d){
 }
 document.querySelectorAll("#loopbar button[data-edge]").forEach(b=>
   b.onclick=()=>nudge(b.dataset.edge,+b.dataset.n));
+
+/* Domykanie pętli: serwer szuka końca, przed którym przebieg wygląda jak przed
+   początkiem, i dociąga obie granice do przejść przez zero. Zgodność zwracana
+   przez serwer mówi, na ile się udało — nie każdy materiał da się domknąć. */
+$("fit").onclick=()=>fitLoop();
+async function fitLoop(){
+  if(loopFrom===null||stopAt===null||!cur){$("msg").textContent="najpierw zaznacz fragment";return;}
+  const before={s:loopFrom,e:stopAt};
+  $("lpFit").textContent="szukam...";$("lpFit").style.color="var(--dim)";
+  try{
+    const r=await (await fetch("/api/loopfit",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({track_id:cur.id,start:loopFrom,end:stopAt})})).json();
+    if(r.note){$("lpFit").textContent=r.note;$("lpFit").style.color="#e07a5a";return;}
+    loopFrom=r.start;stopAt=r.end;
+    if(sel){sel.start=r.start;sel.end=r.end;}
+    const ocena = r.score>=0.8?"domknięte":r.score>=0.5?"przyzwoicie":"słabo — ten materiał się nie domyka";
+    $("lpFit").textContent=`${ocena} · zgodność ${r.score.toFixed(2)} · `+
+      `start ${((r.start-before.s)*1000).toFixed(0)} ms, koniec ${((r.end-before.e)*1000).toFixed(0)} ms`;
+    $("lpFit").style.color = r.score>=0.8?"var(--ok)":r.score>=0.5?"var(--warn)":"#e07a5a";
+    drawLoopBar();drawWave();
+    player.currentTime=loopFrom;
+    if(player.paused) player.play().catch(()=>{});
+  }catch(e){$("lpFit").textContent="nie udało się: "+(e.message||e.name);$("lpFit").style.color="#e07a5a";}
+}
 
 /* ---------- tagi ---------- */
 async function putTags(f,tags){
@@ -508,6 +537,7 @@ document.onkeydown=e=>{
     else stopPlayback();}
   else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
   else if(e.key==="l"||e.key==="L"){toggleLoop();}
+  else if(e.key==="f"||e.key==="F"){fitLoop();e.preventDefault();}
   else if(e.key==="["){nudge("s",e.shiftKey?-0.1:-0.01);e.preventDefault();}
   else if(e.key==="]"){nudge("s",e.shiftKey? 0.1: 0.01);e.preventDefault();}
   else if(e.key===","){nudge("e",e.shiftKey?-0.1:-0.01);e.preventDefault();}

@@ -176,6 +176,22 @@ def api_tagcloud():
     return sorted(({"tag": k, "n": v} for k, v in counts.items()), key=lambda d: -d["n"])
 
 
+class LoopFit(BaseModel):
+    track_id: str
+    start: float
+    end: float
+
+
+@app.post("/api/loopfit")
+def api_loopfit(q: LoopFit):
+    path = catalog().get(q.track_id)
+    if not path:
+        raise HTTPException(404, "nie ma takiego nagrania")
+    if q.end - q.start < 0.06:
+        return {"start": q.start, "end": q.end, "score": None, "note": "za krótka pętla"}
+    return slicer.fit_loop(path, q.start, q.end)
+
+
 class ExportItem(BaseModel):
     track_id: str
     start: float

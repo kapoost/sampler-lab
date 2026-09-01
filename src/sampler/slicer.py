@@ -82,3 +82,86 @@ def export(path: Path, start: float, end: float, dest: Path, target_sr: int = 44
     dest.parent.mkdir(parents=True, exist_ok=True)
     sf.write(dest, y.T, sr, subtype="PCM_16")
     return dest
+
+
+# --- domykanie pętli -------------------------------------------------------
+
+FIT_MATCH = 0.025   # ile sekund porównujemy
+FIT_SEARCH = 0.080  # jak daleko szukamy lepszego końca
+FIT_SNAP = 0.003    # promień dociągania do przejścia przez zero
+
+
+def _zero_cross(y: np.ndarray, idx: int, radius: int) -> int:
+    """Najbliższe przejście przez zero w górę (z minusa na plus).
+
+    Cięcie w takim punkcie nie daje trzasku, bo obie strony startują od zera
+    i z tym samym kierunkiem narastania.
+    """
+    lo, hi = max(1, idx - radius), min(len(y) - 1, idx + radius)
+    best, bd = idx, radius + 1
+    for i in range(lo, hi):
+        if y[i - 1] <= 0 < y[i]:
+            d = abs(i - idx)
+            if d < bd:
+                best, bd = i, d
+    return best
+
+
+def fit_loop(path: Path, start: float, end: float, sr: int = 44100) -> dict:
+    """Przesuwa koniec pętli tak, żeby przechodził w jej początek bez szwu.
+
+    Kryterium: fragment TUŻ PRZED końcem ma wyglądać jak fragment tuż przed
+    początkiem. Wtedy przeskok z końca na początek jest dla ucha kontynuacją,
+    a nie cięciem. Zwracamy też zgodność, bo nie każdy materiał da się domknąć
+    — przy szumie albo mowie nie ma czego dopasować i trzeba to powiedzieć.
+    """
+    look = FIT_MATCH + 0.005
+    off = max(0.0, start - look)
+    total = librosa.get_duration(path=str(path))
+    dur = min(total - off, (end - off) + FIT_SEARCH + 0.01)
+    y, _ = librosa.load(path, sr=sr, mono=True, offset=off, duration=dur)
+
+    N, S, R = int(FIT_MATCH * sr), int(FIT_SEARCH * sr), int(FIT_SNAP * sr)
+    i_start = int(round((start - off) * sr))
+    i_end = int(round((end - off) * sr))
+    if i_start < N or len(y) < i_start + 2 * N or i_end <= i_start + N:
+        return {"start": start, "end": end, "score": None,
+                "note": "za krótki fragment na dopasowanie"}
+
+    i_start = _zero_cross(y, i_start, R)
+    ref = y[i_start - N:i_start]
+    ref_n = float(np.linalg.norm(ref))
+    if ref_n < 1e-6:
+        return {"start": round(off + i_start / sr, 4), "end": end, "score": None,
+                "note": "cisza na początku — nie ma czego dopasować"}
+
+    lo = max(i_start + N + 1, i_end - S)
+    hi = min(len(y), i_end + S)
+    if hi - lo < 2:
+        return {"start": round(off + i_start / sr, 4), "end": end, "score": None,
+                "note": "brak miejsca na szukanie"}
+
+    # Wszystkie okna długości N kończące się w [lo, hi) naraz.
+    win = np.lib.stride_tricks.sliding_window_view(y, N)[lo - N:hi - N]
+    norms = np.linalg.norm(win, axis=1)
+    ok = norms > 1e-6
+    if not ok.any():
+        return {"start": round(off + i_start / sr, 4), "end": end, "score": None,
+                "note": "cisza w obszarze szukania"}
+    scores = np.full(len(win), -1.0)
+    scores[ok] = (win[ok] @ ref) / (norms[ok] * ref_n)
+
+    # Przy remisie wybieramy kandydata NAJBLIZSZEGO zadanemu koncowi. Bez tego
+    # argmax bierze pierwszego z brzegu i petla skraca sie o promien szukania —
+    # na materiale okresowym kazda wielokrotnosc okresu ma te sama zgodnosc.
+    best = float(scores.max())
+    close = np.flatnonzero(scores >= best - 0.005)
+    i_best = lo + int(close[np.argmin(np.abs(close + lo - i_end))])
+    i_best = _zero_cross(y, i_best, R)
+
+    return {
+        "start": round(off + i_start / sr, 4),
+        "end": round(off + i_best / sr, 4),
+        "score": round(best, 3),
+        "note": None,
+    }
