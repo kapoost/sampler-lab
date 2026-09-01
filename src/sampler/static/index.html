@@ -20,7 +20,7 @@
   .tag.grid{color:var(--ok)} .tag.rub{color:var(--warn)}
   #main{display:flex;flex-direction:column;overflow:hidden}
   #tabs{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);align-items:center}
-  #wave{width:100%;height:100px;display:block;background:#101216;border-bottom:1px solid var(--line);cursor:pointer}
+  #wave{width:100%;height:100px;display:block;background:#101216;border-bottom:1px solid var(--line);cursor:crosshair;user-select:none}
   #filters{display:flex;gap:10px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);
            background:#181b21;font-size:11px;color:var(--dim);flex-wrap:wrap}
   #filters input[type=number]{width:56px}
@@ -65,7 +65,7 @@
     <button id="tabTrack" class="on">Nagranie</button>
     <button id="tabSearch">Szukaj</button>
     <input id="tagQuery" class="hidden" autocomplete="off" spellcheck="false" placeholder="tagi po przecinku, np. głos,fraza" style="flex:1">
-    <span id="sub" style="color:var(--dim);font-size:11px"></span>
+    <span id="sub" style="color:var(--dim);font-size:11px"></span><span id="selInfo" style="color:var(--warn);font-size:11px"></span>
   </div>
 
   <canvas id="wave"></canvas>
@@ -94,7 +94,7 @@
     <kbd>↑</kbd><kbd>↓</kbd> wiersz &nbsp; <kbd>spacja</kbd> odsłuch<br>
     <kbd>Enter</kbd> na pad &nbsp; <kbd>A</kbd>–<kbd>D</kbd> bank<br>
     <kbd>T</kbd> tagowanie &nbsp; <kbd>1</kbd>–<kbd>9</kbd> szybki tag<br>
-    <kbd>Esc</kbd> stop
+    <kbd>Esc</kbd> stop / zdejmij zaznaczenie<br><span style="color:var(--warn)">przeciągnij po fali = własny zakres</span>
   </div>
   <h2>Chmura tagów</h2>
   <div id="cloud" style="padding:8px 10px;display:flex;gap:4px;flex-wrap:wrap"></div>
@@ -113,7 +113,7 @@
 const BANKS = ["A","B","C","D"];
 const PRESETS = ["głos","fraza","oddech","riff","akord","bas","perkusja","stopa","werbel","szum","radio","woda","przejście"];
 let tracks=[], cur=null, slices=[], view=[], row=0, bank="A", padCur=0, mode="track";
-let picks={}, fragTags={}, stopAt=null, searchRows=[];
+let picks={}, fragTags={}, stopAt=null, searchRows=[], sel=null, drag=null;
 const player=document.getElementById("player"), $=id=>document.getElementById(id);
 const typing = () => ["INPUT","TEXTAREA"].includes(document.activeElement.tagName);
 
@@ -168,14 +168,40 @@ function drawWave(){
   ctx.fillStyle="rgba(99,210,154,.55)";
   view.forEach(s=>ctx.fillRect(s.start/dur*W,H-4,Math.max(1,(s.end-s.start)/dur*W),4));
   const s=view[row];
-  if(s){ctx.fillStyle="rgba(111,178,255,.22)";ctx.fillRect(s.start/dur*W,0,Math.max(2,(s.end-s.start)/dur*W),H);}
+  if(s&&!sel){ctx.fillStyle="rgba(111,178,255,.22)";ctx.fillRect(s.start/dur*W,0,Math.max(2,(s.end-s.start)/dur*W),H);}
+  const d = drag || sel;
+  if(d){
+    const a=Math.min(d.start,d.end)/dur*W, b=Math.max(d.start,d.end)/dur*W;
+    ctx.fillStyle="rgba(224,178,90,.26)"; ctx.fillRect(a,0,Math.max(2,b-a),H);
+    ctx.strokeStyle="#e0b25a"; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(a+.5,0); ctx.lineTo(a+.5,H); ctx.moveTo(b-.5,0); ctx.lineTo(b-.5,H); ctx.stroke();
+  }
 }
-$("wave").onclick=e=>{
-  if(mode!=="track") return;
-  const t=(e.offsetX/$("wave").clientWidth)*(cur.wave.duration||1);
-  let best=0,bd=1e9; view.forEach((s,i)=>{const d=Math.abs(s.start-t); if(d<bd){bd=d;best=i;}});
-  row=best; drawRows(); drawWave(); audition();
-};
+const timeAt = e => Math.max(0, Math.min(cur.wave.duration||1,
+  (e.offsetX/$("wave").clientWidth)*(cur.wave.duration||1)));
+let dragPx=0;
+$("wave").onmousedown=e=>{ if(mode!=="track"||!cur) return;
+  drag={start:timeAt(e), end:timeAt(e)}; dragPx=e.offsetX; drawWave(); };
+$("wave").onmousemove=e=>{ if(!drag) return; drag.end=timeAt(e); drawWave(); };
+window.addEventListener("mouseup", e=>{
+  if(!drag) return;
+  const moved = Math.abs(e.offsetX-dragPx) > 3;
+  const a=Math.min(drag.start,drag.end), b=Math.max(drag.start,drag.end);
+  drag=null;
+  if(moved && b-a >= 0.05){
+    sel={start:+a.toFixed(3), end:+b.toFixed(3)};
+    const L=sel.end-sel.start;
+    const el=$("selInfo");
+    el.textContent=`zaznaczenie ${fmt(sel.start)} – ${fmt(sel.end)}  (${L.toFixed(2)} s)`
+      + (L>6 ? "  — długie jak na pad, pamięć MPC to 2 GB" : "");
+    el.style.color = L>6 ? "#e07a5a" : "var(--warn)";
+    drawWave(); drawRows(); audition();
+  } else if(cur && mode==="track"){
+    sel=null; $("selInfo").textContent="";
+    let best=0,bd=1e9; view.forEach((s,i)=>{const d=Math.abs(s.start-a); if(d<bd){bd=d;best=i;}});
+    row=best; drawRows(); drawWave(); audition();
+  }
+});
 
 function drawRows(){
   const tb=$("tb"); tb.innerHTML="";
@@ -194,7 +220,7 @@ function drawRows(){
     tb.appendChild(tr);
   });
   const c=tb.querySelector("tr.cur"); if(c)c.scrollIntoView({block:"nearest"});
-  $("tagBox").value=(fragTags[view[row]?.idx]||[]).join(", ");
+  const _f=currentFrag(); $("tagBox").value=_f?(fragTags[_f.slice_idx]||[]).join(", "):"";
   $("cnt").textContent=Object.keys(picks).length+" zaznaczonych";
 }
 
@@ -225,22 +251,57 @@ function drawSearch(){
 const fmt=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,"0")}.${Math.floor(t*10%10)}`;
 const padOf=idx=>Object.keys(picks).find(k=>picks[k].track_id===cur.id&&picks[k].idx===idx);
 
-function audition(){const s=view[row]; if(!s)return; player.currentTime=s.start; stopAt=s.end; player.play();}
-function auditionSearch(){const f=searchRows[row]; if(!f)return;
-  if(!player.src.endsWith("/audio/"+f.track_id)) player.src="/audio/"+f.track_id;
-  player.currentTime=f.start; stopAt=f.end; player.play();}
+async function play(start, end, tid){
+  try{
+    if(tid && !player.src.endsWith("/audio/"+tid)) player.src="/audio/"+tid;
+    // Przypisanie currentTime przed wczytaniem metadanych jest po cichu ignorowane.
+    if(player.readyState < 1){
+      $("msg").textContent="wczytuję...";
+      await new Promise((ok,bad)=>{
+        const done=()=>{clear();ok();}, fail=()=>{clear();bad(new Error("nie udało się wczytać pliku"));};
+        const to=setTimeout(fail, 15000);
+        const clear=()=>{clearTimeout(to);
+          player.removeEventListener("loadedmetadata",done); player.removeEventListener("error",fail);};
+        player.addEventListener("loadedmetadata",done); player.addEventListener("error",fail);
+      });
+    }
+    player.currentTime=start; stopAt=end;
+    await player.play();   // przeglądarka potrafi odmówić — bez await błąd ginie
+    $("msg").textContent=`odtwarzam ${start.toFixed(2)}–${end.toFixed(2)} s`;
+  }catch(e){
+    stopAt=null;
+    $("msg").textContent="odsłuch nie zadziałał: "+(e.message||e.name);
+  }
+}
+function peakRms(a,b){          // przyblizenie z podgladu fali — do filtrow i podgladu, nie do pomiaru
+  const p=cur.wave.peaks, dur=cur.wave.duration||1;
+  const i0=Math.floor(a/dur*p.length), i1=Math.max(i0+1,Math.ceil(b/dur*p.length));
+  const seg=p.slice(i0,i1); if(!seg.length) return -60;
+  return +(20*Math.log10(seg.reduce((x,y)=>x+y,0)/seg.length+1e-6)).toFixed(1);
+}
+function currentFrag(){
+  if(mode==="search") return searchRows[row] ? {...searchRows[row], tid:searchRows[row].track_id} : null;
+  if(sel) return {slice_idx:-Math.round(sel.start*1000), start:sel.start, end:sel.end,
+                  dur:+(sel.end-sel.start).toFixed(3), rms_db:peakRms(sel.start,sel.end), tid:cur.id};
+  const s=view[row];
+  return s ? {slice_idx:s.idx, start:s.start, end:s.end, dur:s.dur, rms_db:s.rms_db, tid:cur.id} : null;
+}
+function audition(){const f=currentFrag(); if(f) play(f.start, f.end, f.tid);}
+function auditionSearch(){const f=searchRows[row]; if(f) play(f.start, f.end, f.track_id);}
 player.ontimeupdate=()=>{if(stopAt!==null&&player.currentTime>=stopAt){player.pause();stopAt=null;}};
+player.onerror=()=>{$("msg").textContent="błąd wczytywania dźwięku";};
 
 async function saveTags(tags){
-  const s=view[row]; if(!s)return;
+  const f=currentFrag(); if(!f)return;
   const r=await (await fetch("/api/frag",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({track_id:cur.id,slice_idx:s.idx,start:s.start,end:s.end,dur:s.dur,rms_db:s.rms_db,tags})})).json();
-  if(r.tags.length) fragTags[s.idx]=r.tags; else delete fragTags[s.idx];
+    body:JSON.stringify({track_id:f.tid,slice_idx:f.slice_idx,start:f.start,end:f.end,
+                         dur:f.dur,rms_db:f.rms_db,tags})})).json();
+  if(r.tags.length) fragTags[f.slice_idx]=r.tags; else delete fragTags[f.slice_idx];
   refilter(); cloud();
 }
 function toggleTag(t){
-  const s=view[row]; if(!s)return;
-  const has=new Set(fragTags[s.idx]||[]);
+  const f=currentFrag(); if(!f)return;
+  const has=new Set(fragTags[f.slice_idx]||[]);
   has.has(t)?has.delete(t):has.add(t);
   saveTags([...has]);
 }
@@ -283,18 +344,17 @@ function drawPads(){const g=$("pads");g.innerHTML="";
     d.onclick=()=>{if(picks[k])delete picks[k];padCur=i;drawPads();drawRows();};g.appendChild(d);}}
 
 function assign(){
-  const src = mode==="search" ? searchRows[row] : view[row];
+  const src = currentFrag();
   if(!src) return;
   let i=padCur; while(i<16&&picks[bank+String(i+1).padStart(2,"0")])i++;
   if(i>=16){$("msg").textContent="bank "+bank+" pełny";return;}
   const k=bank+String(i+1).padStart(2,"0");
-  const tid = mode==="search" ? src.track_id : cur.id;
   const nm  = mode==="search" ? src.name : cur.name;
-  picks[k]={track_id:tid, idx:src.slice_idx ?? src.idx, start:src.start, end:src.end,
+  picks[k]={track_id:src.tid, idx:src.slice_idx, start:src.start, end:src.end,
             label:`${nm.slice(0,18)}_${src.start.toFixed(1)}`};
   padCur=Math.min(15,i+1);
   const len = mode==="search" ? searchRows.length : view.length;
-  if(row<len-1) row++;
+  if(!sel && row<len-1) row++;
   drawPads(); drawRows();
   if(mode==="track") drawWave();
 }
@@ -302,11 +362,12 @@ function assign(){
 document.onkeydown=e=>{
   if(typing()) return;
   const len = mode==="search" ? searchRows.length : view.length;
-  if(e.key==="ArrowDown"){row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
-  else if(e.key==="ArrowUp"){row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
+  if(e.key==="ArrowDown"){sel=null;$("selInfo").textContent="";row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
+  else if(e.key==="ArrowUp"){sel=null;$("selInfo").textContent="";row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
   else if(e.key===" "){mode==="search"?auditionSearch():audition();e.preventDefault();}
   else if(e.key==="Enter"){assign();e.preventDefault();}
-  else if(e.key==="Escape"){player.pause();stopAt=null;}
+  else if(e.key==="Escape"){player.pause();stopAt=null;
+    if(sel){sel=null;$("selInfo").textContent="";drawWave();drawRows();}}
   else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
   else if(/^[1-9]$/.test(e.key)&&mode==="track"){const t=PRESETS[+e.key-1];if(t)toggleTag(t);}
   else if(/^[a-dA-D]$/.test(e.key)){bank=e.key.toUpperCase();padCur=0;drawBanks();drawPads();}
