@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Materiał audio i wyniki analizy — nie idą do repozytorium.
+# data/raw zawiera nagrania pobrane z archive.org (w tym audycje radiowe
+# objęte prawami) oraz materiał prywatny. Repozytorium zawiera kod, nie dźwięk.
+data/raw/
+data/derived/
+data/export/
+
+# Zrzuty ekranu i pliki robocze narzędzi
+.playwright-mcp/
+*.png

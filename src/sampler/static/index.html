@@ -1,0 +1,326 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sampler-lab — zaznaczanie fragmentów</title>
+<style>
+  :root{--bg:#14161a;--panel:#1c1f26;--line:#2b3039;--fg:#e6e8ec;--dim:#8b93a1;
+        --acc:#6fb2ff;--ok:#63d29a;--warn:#e0b25a}
+  *{box-sizing:border-box}
+  body{margin:0;font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+       background:var(--bg);color:var(--fg);height:100vh;display:grid;
+       grid-template-columns:270px 1fr 220px;grid-template-rows:1fr auto}
+  .col{overflow:auto;border-right:1px solid var(--line)}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);
+     margin:0;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
+  .trk{padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+  .trk:hover{background:#20242c}
+  .trk.sel{background:#232a36;box-shadow:inset 2px 0 0 var(--acc)}
+  .trk .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .meta{color:var(--dim);font-size:11px;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap}
+  .tag{background:#262b34;border-radius:3px;padding:0 5px}
+  .tag.grid{color:var(--ok)} .tag.rub{color:var(--warn)}
+  #main{display:flex;flex-direction:column;overflow:hidden}
+  #tabs{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);align-items:center}
+  #wave{width:100%;height:100px;display:block;background:#101216;border-bottom:1px solid var(--line);cursor:pointer}
+  #filters{display:flex;gap:10px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);
+           background:#181b21;font-size:11px;color:var(--dim);flex-wrap:wrap}
+  #filters input[type=number]{width:56px}
+  input,select{background:#101216;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
+  input:focus,select:focus{outline:none;border-color:var(--acc)}
+  #rows{overflow:auto;flex:1}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #22262e;white-space:nowrap}
+  th{font-size:10px;text-transform:uppercase;color:var(--dim);letter-spacing:.06em;
+     position:sticky;top:0;background:var(--panel);z-index:1}
+  tr.cur{background:#232a36;box-shadow:inset 0 0 0 1px var(--acc)}
+  tr.on{background:#1b2b22}
+  tr:hover{background:#20242c}
+  .bar{display:inline-block;height:11px;background:var(--acc);opacity:.45;vertical-align:middle}
+  .num{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+  .tg{display:inline-block;background:#2b3b4d;color:#bcd8f7;border-radius:3px;padding:0 5px;margin-right:3px;font-size:11px}
+  button{background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:4px;
+         padding:3px 8px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--acc)}
+  button.on{background:var(--acc);color:#0b0d10;border-color:var(--acc)}
+  #preset{display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px;border-top:1px solid var(--line);background:#181b21}
+  #preset button{font-size:11px;padding:2px 7px}
+  #banks{display:flex;gap:4px;padding:8px 10px}
+  #pads{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:0 10px}
+  .pad{aspect-ratio:1;border:1px solid var(--line);border-radius:5px;background:#191d24;
+       display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--dim);
+       cursor:pointer;overflow:hidden;padding:2px;text-align:center;word-break:break-all}
+  .pad.full{background:#243a2e;border-color:var(--ok);color:var(--fg)}
+  .pad.cur{box-shadow:inset 0 0 0 2px var(--acc)}
+  #bottom{grid-column:1/-1;border-top:1px solid var(--line);background:var(--panel);
+          padding:8px 12px;display:flex;gap:12px;align-items:center}
+  kbd{background:#262b34;border:1px solid var(--line);border-bottom-width:2px;border-radius:3px;
+      padding:0 4px;font-size:11px;font-family:inherit}
+  #msg{color:var(--dim);margin-left:auto}
+  .hidden{display:none!important}
+</style>
+
+<div class="col" id="tracks"><h2>Nagrania</h2></div>
+
+<div id="main">
+  <div id="tabs">
+    <button id="tabTrack" class="on">Nagranie</button>
+    <button id="tabSearch">Szukaj</button>
+    <input id="tagQuery" class="hidden" autocomplete="off" spellcheck="false" placeholder="tagi po przecinku, np. głos,fraza" style="flex:1">
+    <span id="sub" style="color:var(--dim);font-size:11px"></span>
+  </div>
+
+  <canvas id="wave"></canvas>
+
+  <div id="filters">
+    <span>dług. od <input type="number" id="fMinDur" value="0.35" step="0.1" min="0"> do
+      <input type="number" id="fMaxDur" value="6" step="0.5" min="0"> s</span>
+    <span>głośność od <input type="number" id="fMinDb" value="-32" step="1"> dB</span>
+    <label><input type="checkbox" id="fTagged"> tylko otagowane</label>
+    <span id="fCount"></span>
+  </div>
+
+  <div id="rows"><table>
+    <thead><tr><th>#</th><th>kształt</th><th>start</th><th>dług.</th><th>dB</th><th>tagi</th><th>pad</th></tr></thead>
+    <tbody id="tb"></tbody>
+  </table></div>
+
+  <div id="preset"></div>
+</div>
+
+<div class="col" id="right">
+  <h2>Pady</h2>
+  <div id="banks"></div>
+  <div id="pads"></div>
+  <div style="padding:12px 10px;color:var(--dim);font-size:11px;line-height:1.75">
+    <kbd>↑</kbd><kbd>↓</kbd> wiersz &nbsp; <kbd>spacja</kbd> odsłuch<br>
+    <kbd>Enter</kbd> na pad &nbsp; <kbd>A</kbd>–<kbd>D</kbd> bank<br>
+    <kbd>T</kbd> tagowanie &nbsp; <kbd>1</kbd>–<kbd>9</kbd> szybki tag<br>
+    <kbd>Esc</kbd> stop
+  </div>
+  <h2>Chmura tagów</h2>
+  <div id="cloud" style="padding:8px 10px;display:flex;gap:4px;flex-wrap:wrap"></div>
+</div>
+
+<div id="bottom">
+  <button id="exp">Eksportuj zaznaczone</button>
+  <span id="cnt">0 zaznaczonych</span>
+  <input id="tagBox" autocomplete="off" spellcheck="false" placeholder="tagi fragmentu — Enter zapisuje" style="width:320px">
+  <span id="msg"></span>
+</div>
+
+<audio id="player"></audio>
+
+<script>
+const BANKS = ["A","B","C","D"];
+const PRESETS = ["głos","fraza","oddech","riff","akord","bas","perkusja","stopa","werbel","szum","radio","woda","przejście"];
+let tracks=[], cur=null, slices=[], view=[], row=0, bank="A", padCur=0, mode="track";
+let picks={}, fragTags={}, stopAt=null, searchRows=[];
+const player=document.getElementById("player"), $=id=>document.getElementById(id);
+const typing = () => ["INPUT","TEXTAREA"].includes(document.activeElement.tagName);
+
+async function boot(){
+  tracks = await (await fetch("/api/tracks")).json();
+  const box=$("tracks");
+  tracks.forEach(t=>{
+    const d=document.createElement("div"); d.className="trk"; d.dataset.id=t.id;
+    const g = t.gridded===1?'<span class="tag grid">równe</span>':t.gridded===0?'<span class="tag rub">rubato</span>':'';
+    d.innerHTML=`<div class="n">${t.name}</div><div class="meta">
+      ${t.bpm?`<span class="tag">${t.bpm} BPM</span>`:''}${t.key_name?`<span class="tag">${t.key_name}</span>`:''}${g}</div>`;
+    d.onclick=()=>load(t.id); box.appendChild(d);
+  });
+  PRESETS.forEach((t,i)=>{ const b=document.createElement("button");
+    b.textContent = i<9 ? `${i+1} ${t}` : t; b.onclick=()=>toggleTag(t); $("preset").appendChild(b); });
+  drawBanks(); drawPads(); cloud();
+  mode="track"; $("tagQuery").value=""; syncTabs();
+  if(tracks.length) await load(tracks[0].id);
+}
+
+async function load(id){
+  mode="track"; syncTabs();
+  document.querySelectorAll(".trk").forEach(e=>e.classList.toggle("sel", e.dataset.id===id));
+  $("msg").textContent="liczę cięcia...";
+  const d=await (await fetch("/api/track/"+id)).json();
+  cur=d; slices=d.slices; row=0;
+  player.src="/audio/"+id;
+  fragTags={};
+  (await (await fetch("/api/frags?track_id="+id)).json()).forEach(f=>fragTags[f.slice_idx]=f.tags);
+  $("sub").textContent = `${slices.length} fragmentów` + (d.wave.duration >= d.capped-1 ? ` (pierwsze ${d.capped|0} s)` : "");
+  $("msg").textContent="";
+  drawWave(); refilter();
+}
+
+function refilter(){
+  const lo=+$("fMinDur").value, hi=+$("fMaxDur").value, db=+$("fMinDb").value, only=$("fTagged").checked;
+  view = slices.filter(s => s.dur>=lo && s.dur<=hi && s.rms_db>=db && (!only || (fragTags[s.idx]||[]).length));
+  if(row>=view.length) row=Math.max(0,view.length-1);
+  $("fCount").textContent = `${view.length} z ${slices.length}`;
+  drawRows(); drawWave();
+}
+["fMinDur","fMaxDur","fMinDb","fTagged"].forEach(id=>$(id).oninput=refilter);
+
+function drawWave(){
+  if(mode!=="track"||!cur) return;
+  const c=$("wave"), ctx=c.getContext("2d");
+  c.width=c.clientWidth*devicePixelRatio; c.height=100*devicePixelRatio;
+  ctx.scale(devicePixelRatio,devicePixelRatio);
+  const W=c.clientWidth,H=100,p=cur.wave.peaks,dur=cur.wave.duration||1;
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#39414f";
+  p.forEach((v,i)=>{const x=i/p.length*W,h=v*(H-14);ctx.fillRect(x,(H-h)/2,Math.max(1,W/p.length),h);});
+  ctx.fillStyle="rgba(99,210,154,.55)";
+  view.forEach(s=>ctx.fillRect(s.start/dur*W,H-4,Math.max(1,(s.end-s.start)/dur*W),4));
+  const s=view[row];
+  if(s){ctx.fillStyle="rgba(111,178,255,.22)";ctx.fillRect(s.start/dur*W,0,Math.max(2,(s.end-s.start)/dur*W),H);}
+}
+$("wave").onclick=e=>{
+  if(mode!=="track") return;
+  const t=(e.offsetX/$("wave").clientWidth)*(cur.wave.duration||1);
+  let best=0,bd=1e9; view.forEach((s,i)=>{const d=Math.abs(s.start-t); if(d<bd){bd=d;best=i;}});
+  row=best; drawRows(); drawWave(); audition();
+};
+
+function drawRows(){
+  const tb=$("tb"); tb.innerHTML="";
+  if(mode==="search") return drawSearch();
+  const maxd=Math.max(...view.map(s=>s.dur),1);
+  view.forEach((s,i)=>{
+    const tr=document.createElement("tr"), key=padOf(s.idx), tg=fragTags[s.idx]||[];
+    tr.className=(i===row?"cur ":"")+(key?"on":"");
+    tr.innerHTML=`<td class="num">${s.idx+1}</td>
+      <td><span class="bar" style="width:${Math.round(s.dur/maxd*80)+4}px"></span></td>
+      <td class="num">${fmt(s.start)}</td><td class="num">${s.dur.toFixed(2)}</td>
+      <td class="num">${s.rms_db.toFixed(0)}</td>
+      <td>${tg.map(t=>`<span class="tg">${t}</span>`).join("")}</td>
+      <td>${key||""}</td>`;
+    tr.onclick=()=>{row=i;drawRows();drawWave();audition();};
+    tb.appendChild(tr);
+  });
+  const c=tb.querySelector("tr.cur"); if(c)c.scrollIntoView({block:"nearest"});
+  $("tagBox").value=(fragTags[view[row]?.idx]||[]).join(", ");
+  $("cnt").textContent=Object.keys(picks).length+" zaznaczonych";
+}
+
+function drawSearch(){
+  const tb=$("tb");
+  if(!searchRows.length){
+    const q=$("tagQuery").value.trim();
+    tb.innerHTML=`<tr><td colspan="7" style="padding:20px;color:var(--dim)">`+
+      (q ? `Brak fragmentów z tagami: <b>${q}</b>.`
+         : `Nic jeszcze nie otagowane.`)+
+      ` Wróć do zakładki <b>Nagranie</b>, zaznacz fragment i otaguj go klawiszami `+
+      `<kbd>1</kbd>–<kbd>9</kbd> albo <kbd>T</kbd>.</td></tr>`;
+    $("sub").textContent="0 otagowanych fragmentów";
+    return;
+  }
+  searchRows.forEach((f,i)=>{
+    const tr=document.createElement("tr"); tr.className=(i===row?"cur":"");
+    tr.innerHTML=`<td class="num">${i+1}</td><td>${f.name.slice(0,34)}</td>
+      <td class="num">${fmt(f.start)}</td><td class="num">${f.dur.toFixed(2)}</td>
+      <td class="num">${f.rms_db.toFixed(0)}</td>
+      <td>${f.tags.map(t=>`<span class="tg">${t}</span>`).join("")}</td><td></td>`;
+    tr.onclick=()=>{row=i;drawRows();auditionSearch();};
+    tb.appendChild(tr);
+  });
+  $("sub").textContent=`${searchRows.length} otagowanych fragmentów`;
+}
+
+const fmt=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,"0")}.${Math.floor(t*10%10)}`;
+const padOf=idx=>Object.keys(picks).find(k=>picks[k].track_id===cur.id&&picks[k].idx===idx);
+
+function audition(){const s=view[row]; if(!s)return; player.currentTime=s.start; stopAt=s.end; player.play();}
+function auditionSearch(){const f=searchRows[row]; if(!f)return;
+  if(!player.src.endsWith("/audio/"+f.track_id)) player.src="/audio/"+f.track_id;
+  player.currentTime=f.start; stopAt=f.end; player.play();}
+player.ontimeupdate=()=>{if(stopAt!==null&&player.currentTime>=stopAt){player.pause();stopAt=null;}};
+
+async function saveTags(tags){
+  const s=view[row]; if(!s)return;
+  const r=await (await fetch("/api/frag",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({track_id:cur.id,slice_idx:s.idx,start:s.start,end:s.end,dur:s.dur,rms_db:s.rms_db,tags})})).json();
+  if(r.tags.length) fragTags[s.idx]=r.tags; else delete fragTags[s.idx];
+  refilter(); cloud();
+}
+function toggleTag(t){
+  const s=view[row]; if(!s)return;
+  const has=new Set(fragTags[s.idx]||[]);
+  has.has(t)?has.delete(t):has.add(t);
+  saveTags([...has]);
+}
+$("tagBox").onkeydown=e=>{
+  if(e.key==="Enter"){ saveTags($("tagBox").value.split(",").map(x=>x.trim()).filter(Boolean)); e.preventDefault(); }
+  if(e.key==="Escape") $("tagBox").blur();
+};
+
+async function cloud(){
+  const c=await (await fetch("/api/tagcloud")).json();
+  $("cloud").innerHTML = c.length ? "" : '<span style="color:var(--dim);font-size:11px">jeszcze nic nie otagowane</span>';
+  c.forEach(t=>{const b=document.createElement("button");
+    b.textContent=`${t.tag} ${t.n}`; b.style.fontSize="11px";
+    b.onclick=()=>{$("tagQuery").value=t.tag; doSearch();}; $("cloud").appendChild(b);});
+}
+
+function syncTabs(){
+  $("tabTrack").className = mode==="track"?"on":"";
+  $("tabSearch").className = mode==="search"?"on":"";
+  $("tagQuery").classList.toggle("hidden", mode!=="search");
+  $("wave").classList.toggle("hidden", mode!=="track");
+  $("filters").classList.toggle("hidden", mode!=="track");
+  $("preset").classList.toggle("hidden", mode!=="track");
+}
+$("tabTrack").onclick=()=>{mode="track";row=0;syncTabs();refilter();};
+$("tabSearch").onclick=()=>{mode="search";row=0;syncTabs();doSearch();};
+$("tagQuery").oninput=()=>doSearch();
+async function doSearch(){
+  searchRows=await (await fetch("/api/frags?tags="+encodeURIComponent($("tagQuery").value))).json();
+  row=0; $("tb").innerHTML=""; drawSearch();
+}
+
+function drawBanks(){const b=$("banks");b.innerHTML="";
+  BANKS.forEach(x=>{const t=document.createElement("button");t.textContent=x;t.className=x===bank?"on":"";
+    t.onclick=()=>{bank=x;padCur=0;drawBanks();drawPads();};b.appendChild(t);});}
+function drawPads(){const g=$("pads");g.innerHTML="";
+  for(let i=0;i<16;i++){const k=bank+String(i+1).padStart(2,"0"),d=document.createElement("div");
+    d.className="pad"+(picks[k]?" full":"")+(i===padCur?" cur":"");
+    d.textContent=picks[k]?picks[k].label.slice(0,13):(i+1);
+    d.onclick=()=>{if(picks[k])delete picks[k];padCur=i;drawPads();drawRows();};g.appendChild(d);}}
+
+function assign(){
+  const src = mode==="search" ? searchRows[row] : view[row];
+  if(!src) return;
+  let i=padCur; while(i<16&&picks[bank+String(i+1).padStart(2,"0")])i++;
+  if(i>=16){$("msg").textContent="bank "+bank+" pełny";return;}
+  const k=bank+String(i+1).padStart(2,"0");
+  const tid = mode==="search" ? src.track_id : cur.id;
+  const nm  = mode==="search" ? src.name : cur.name;
+  picks[k]={track_id:tid, idx:src.slice_idx ?? src.idx, start:src.start, end:src.end,
+            label:`${nm.slice(0,18)}_${src.start.toFixed(1)}`};
+  padCur=Math.min(15,i+1);
+  const len = mode==="search" ? searchRows.length : view.length;
+  if(row<len-1) row++;
+  drawPads(); drawRows();
+  if(mode==="track") drawWave();
+}
+
+document.onkeydown=e=>{
+  if(typing()) return;
+  const len = mode==="search" ? searchRows.length : view.length;
+  if(e.key==="ArrowDown"){row=Math.min(len-1,row+1);drawRows();drawWave();e.preventDefault();}
+  else if(e.key==="ArrowUp"){row=Math.max(0,row-1);drawRows();drawWave();e.preventDefault();}
+  else if(e.key===" "){mode==="search"?auditionSearch():audition();e.preventDefault();}
+  else if(e.key==="Enter"){assign();e.preventDefault();}
+  else if(e.key==="Escape"){player.pause();stopAt=null;}
+  else if(e.key==="t"||e.key==="T"){$("tagBox").focus();$("tagBox").select();e.preventDefault();}
+  else if(/^[1-9]$/.test(e.key)&&mode==="track"){const t=PRESETS[+e.key-1];if(t)toggleTag(t);}
+  else if(/^[a-dA-D]$/.test(e.key)){bank=e.key.toUpperCase();padCur=0;drawBanks();drawPads();}
+};
+
+$("exp").onclick=async()=>{
+  const items=Object.entries(picks).map(([k,v])=>({track_id:v.track_id,start:v.start,end:v.end,
+    bank:k[0],pad:parseInt(k.slice(1)),label:v.label}));
+  if(!items.length){$("msg").textContent="nic nie zaznaczone";return;}
+  $("msg").textContent="wycinam...";
+  const r=await (await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({items})})).json();
+  $("msg").textContent=`zapisano ${r.written.length} plików do ${r.folder}`;
+};
+
+boot();
+</script>
